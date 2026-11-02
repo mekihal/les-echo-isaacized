@@ -6,6 +6,7 @@ import { FX, drawGlyphs } from './fx.js';
 import { Net } from './net.js';
 import { UI, NODE_NAMES } from './ui.js';
 import { sfx } from './sfx.js';
+import { music } from './music.js';
 
 const $ = (id) => document.getElementById(id);
 const cv = $('game'); let ctx = cv.getContext('2d', { alpha: false });
@@ -51,6 +52,9 @@ $('authForm').addEventListener('submit', async (e) => {
 });
 fetch('/api/auth/me').then((r) => r.json()).then((j) => { if (j.authenticated) { myName = j.username; start(); } else $('authUser').focus(); }).catch(() => {});
 document.body.classList.add('menu');
+addEventListener('pointerdown', () => music.unlock(), { once: true, passive: true });
+addEventListener('keydown', () => music.unlock(), { once: true });
+addEventListener('pagehide', () => music.fadeOut(.5), { once: true });
 
 function start() {
   if (running) return; running = true;
@@ -75,7 +79,16 @@ function onSnap(m, r) {
   if (first || r.sk.join() !== me.sk.join()) { me.sk = r.sk; ui.setSkin(r.sk); if (!first) { ui.addChat('Ты возродился с новым обликом.', 'sys'); } }
   if (first) { cam.x = r.x; cam.y = r.y; ui.addChat(`Добро пожаловать, ${myName}! Нажми H — все клавиши.`, 'sys'); }
   if (r.rs && !dead) { dead = true; ui.banner('Ты пал', 'возрождение в лагере…'); fx.shake(.8); } else if (!r.rs && dead) { dead = false; }
-  const z = world.zoneAt(r.x); if (z.id !== lastZone) { lastZone = z.id; ui.setZone(z); if (!first) ui.banner(z.name, z.level); }
+  const z = world.zoneAt(r.x);
+  if (z.id !== lastZone) { lastZone = z.id; ui.setZone(z); if (!first) ui.banner(z.name, z.level); }
+  music.setZone(z.id);
+  let nearbyBoss = null;
+  for (const mob of (m?.m || [])) {
+    const monster = init.monsters[mob.k];
+    if (mob.k !== 'echo_dragon' && !monster?.boss) continue;
+    if (Math.hypot(mob.x - r.x, mob.y - r.y) <= 640) { nearbyBoss = mob.k; break; }
+  }
+  music.setBoss(nearbyBoss);
 }
 function onEvent(m) {
   switch (m.type) {
@@ -168,7 +181,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyH') { if (!ui.open || ui.open === 'help') ui.toggle('help'); return; }
   if (e.code === 'KeyM') { if (!ui.open || ui.open === 'map') { ui.toggle('map'); if (ui.open) drawBigMap(); } return; }
   if (e.code === 'F3') { e.preventDefault(); perf.show = !perf.show; if (!perf.show) ui.perf(null); return; }
-  if (e.code === 'KeyN') { ui.addChat(sfx.toggle() ? 'Звук выключен.' : 'Звук включён.', 'sys'); return; }
+  if (e.code === 'KeyN') { const muted = sfx.toggle(); music.setMuted(muted); ui.addChat(muted ? 'Звук выключен.' : 'Звук включён.', 'sys'); return; }
   if (e.code === 'Enter') { e.preventDefault(); ui.openChat(); releaseInputs(); return; }
   if (ui.open) return;
   if (e.repeat) { if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault(); return; }
