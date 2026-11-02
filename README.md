@@ -40,7 +40,7 @@ python server.py
 - Shift — бег и Space - уклонение; ` — инвентарь и крафт; M — большая карта; Enter — чат (ESC для выхода из ввода).
 - 1-9 или скролл — быстрый выбор.
 
-<img width="800" height="451" alt="image" src="https://github.com/user-attachments/assets/8d443bee-e438-401b-b44b-a8878c84c029" />
+<img width="800" height="451" alt="image" src="static/demofold/demo.gif" />
 
 ## Содержимое
 
