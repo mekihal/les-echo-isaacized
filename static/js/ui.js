@@ -46,7 +46,7 @@ export class UI {
   buildHelp() {
     const sec = (t, rows) => `<h3>${t}</h3>` + rows.map(([k, d]) => `<div><span>${d}</span><span>${k}</span></div>`).join('');
     $('helpBody').innerHTML = sec('Движение и бой', [['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / стрелки', 'Идти (с разгоном и скольжением)'], ['<kbd>Shift</kbd> (удерживать)', 'Бег — тратит выносливость'], ['<kbd>Пробел</kbd>', 'Рывок: короткая неуязвимость, 24 стамины'],
-      ['<kbd>ЛКМ</kbd> (удерживать → отпустить)', 'Замах и удар; чем дольше — тем сильнее и дальше отбрасывает'], ['Серия из 3 ударов', 'Третий удар — тяжёлый, с мощным отбрасыванием'], ['<kbd>Z</kbd> (удерживать)', 'Дальний обзор в сторону курсора']])
+      ['<kbd>ЛКМ</kbd> (удерживать, затем отпустить)', 'Замах и удар; чем дольше — тем сильнее и дальше отбрасывает'], ['Серия из 3 ударов', 'Третий удар — тяжёлый, с мощным отбрасыванием'], ['<kbd>Z</kbd> (удерживать)', 'Дальний обзор в сторону курсора']])
       + sec('Предметы', [['<kbd>Ё</kbd>', 'Инвентарь + крафт (верстак не нужен)'], ['<kbd>1</kbd>–<kbd>9</kbd> / колесо', 'Выбрать предмет в быстрой панели'], ['<kbd>ПКМ</kbd>', 'Надеть броню / выпить настойку'], ['<kbd>Q</kbd>', 'Выпить настойку'], ['<kbd>E</kbd>', 'Собрать ресурс рядом (стой на месте)']])
       + sec('Мир', [['<kbd>F</kbd>', 'Поговорить с Хранителем у костра (задания)'], ['<kbd>M</kbd>', 'Карта мира'], ['<kbd>Enter</kbd>', 'Чат'], ['<kbd>H</kbd>', 'Эта справка'], ['<kbd>F3</kbd>', 'FPS и пинг'], ['<kbd>N</kbd>', 'Звук вкл/выкл']])
       + `<h3>Подсказка</h3><div style="grid-column:1/-1;display:block">Без оружия ты дерёшься кулаками. Собери дерево (<kbd>E</kbd>), открой <kbd>Ё</kbd>, выбери в «Крафте» тип оружия и материал — ингредиент определяет урон, редкость и отбрасывание.</div>`;
@@ -55,8 +55,8 @@ export class UI {
   info(key) {
     if (!key) return null; const [t, id] = key.split(':'), I = this.init;
     if (t === 'w') { const w = I.weapons[id]; if (!w) return null; return { name: w.name, rarity: w.rarity, icon: iconURL('w:' + id, { color: w.color, shape: w.shape }), lines: this.weaponLines(w), act: 'ЛКМ — бить · выбери слот 1–9' }; }
-    if (t === 'g') { const g = I.gear[id]; if (!g) return null; return { name: g.name, rarity: g.rarity, icon: iconURL('g:' + id, { color: g.color }), lines: [`Защита: +${g.defense}`, g.lore], act: 'ПКМ — надеть' }; }
-    return { name: I.items[id] || id, rarity: 'common', icon: iconURL('r:' + id), lines: [RES_DESC[id] || ''], count: this.inv?.inventory[id] || 0, act: id === 'potion' ? 'ПКМ / Q — выпить' : '' };
+    if (t === 'g') { const g = I.gear[id]; if (!g) return null; return { name: g.name, rarity: g.rarity, icon: iconURL('g:' + id, { color: g.color }), lines: [`Защита: +${g.defense}`, g.lore], act: 'ПКМ, двойной клик или долгое нажатие — надеть' }; }
+    return { name: I.items[id] || id, rarity: 'common', icon: iconURL('r:' + id), lines: [RES_DESC[id] || ''], count: this.inv?.inventory[id] || 0, act: id === 'potion' ? 'ПКМ, двойной клик или Q — выпить' : '' };
   }
   weaponLines(w) {
     const L = [`${SHAPE_NAMES[w.shape] || 'Оружие'} · ${w.kind === 'bow' ? 'дальний бой' : w.kind === 'staff' ? 'посох' : 'ближний бой'}`, `Урон: ${w.damage}–${w.damage + w.bonus}`, `Отбрасывание: ${w.knock}`,
@@ -98,7 +98,7 @@ export class UI {
     const slots = m.slots; for (let i = 0; i < 9; i++) this.fill(this.hot[i], slots[i]);
     this.hot.forEach((el, i) => el.classList.toggle('sel', i === m.sel));
     if (prevSel !== m.sel || !this._nameInit) { this.flashName(); this._nameInit = true; }
-    $('gold').textContent = '⛁ ' + m.gold; $('lvl').textContent = m.level; this.renderQuest();
+    $('goldN').textContent = m.gold; $('lvl').textContent = m.level; this.renderQuest();
     if (this.open === 'inv') this.renderInv();
   }
   flashName() {
@@ -113,8 +113,14 @@ export class UI {
   }
   bindGridSlot(el, i) {
     this.hoverTip(el);
+    // touch screens have no right button: long press = "use", double tap/click = "use"
+    let lp = 0;
+    el.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse') return; lp = setTimeout(() => { lp = 0; this._lpFired = true; this.held = null; this.updateHeld(); if (this.inv.slots[i]) { this.cb.use(i); sfx.click(); } }, 450); });
+    for (const t of ['pointerup', 'pointerleave', 'pointercancel']) el.addEventListener(t, () => { if (lp) { clearTimeout(lp); lp = 0; } });
+    el.addEventListener('dblclick', () => { this.held = null; this.updateHeld(); if (this.inv.slots[i]) this.cb.use(i); });
     el.addEventListener('mousedown', (e) => {
       e.preventDefault();
+      if (this._lpFired) { this._lpFired = false; return; }
       if (e.button === 2) { this.cb.use(i); sfx.click(); return; }
       const slots = this.inv.slots;
       if (e.shiftKey && slots[i]) { const range = i < 9 ? [9, slots.length] : [0, 9]; for (let j = range[0]; j < range[1]; j++) if (!slots[j]) { this.cb.move(i, j); sfx.click(); return; } return; }
@@ -125,7 +131,17 @@ export class UI {
   updateHeld() {
     const hd = $('held'), key = this.held !== null ? this.inv.slots[this.held] : null; const inf = key && this.info(key);
     if (inf) { hd.querySelector('img').src = inf.icon; hd.classList.remove('hidden'); } else hd.classList.add('hidden');
+    this.renderActions(key, inf);
     [...this.gridHot, ...this.gridMain].forEach((el, k) => el && el.classList.toggle('held', this.held !== null && +el.dataset.i === this.held));
+  }
+  // explicit buttons for the picked-up item (works with touch and without a right mouse button)
+  renderActions(key, inf) {
+    const bar = $('itemActions'); if (!key || !inf) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
+    const label = key[0] === 'g' ? 'Надеть' : key[0] === 'w' ? 'В руки' : key === 'r:potion' ? 'Выпить' : '';
+    bar.innerHTML = `<b style="color:${RARITY[inf.rarity]}">${esc(inf.name)}</b>` + (label ? `<button class="chip" data-a="use">${label}</button>` : '') + '<button class="chip" data-a="drop">Отмена</button>';
+    bar.classList.remove('hidden');
+    bar.querySelector('[data-a="use"]')?.addEventListener('click', () => { const s = this.held; this.held = null; this.updateHeld(); if (s !== null) this.cb.use(s); sfx.click(); });
+    bar.querySelector('[data-a="drop"]').addEventListener('click', () => { this.held = null; this.updateHeld(); sfx.click(); });
   }
   renderInv() {
     const I = this.inv, count = Math.max(45, Math.ceil(I.slots.length / 9) * 9);
@@ -133,7 +149,7 @@ export class UI {
     for (let i = 9; i < count; i++) this.fill(this.gridMain[i], I.slots[i]);
     for (let i = 0; i < 9; i++) { this.fill(this.gridHot[i], I.slots[i]); this.gridHot[i].classList.toggle('sel', i === I.sel); }
     const g = this.init.gear[I.gear], a = $('armorSlot'); a.firstElementChild.src = iconURL('g:' + I.gear, { color: g.color }); a.firstElementChild.style.visibility = 'visible';
-    a.onmouseenter = (e) => this.showTip('g:' + I.gear, e.clientX, e.clientY); a.onmouseleave = () => $('tip').classList.add('hidden'); a.onmousedown = () => this.cb.unequip();
+    a.onmouseenter = (e) => this.showTip('g:' + I.gear, e.clientX, e.clientY); a.onmouseleave = () => $('tip').classList.add('hidden'); a.onmousedown = (e) => { e.preventDefault(); this.cb.unequip(); sfx.click(); };
     const wk = I.slots[I.sel], hs = $('handSlot'); if (wk && wk[0] === 'w') { const w = this.init.weapons[wk.slice(2)]; hs.firstElementChild.src = iconURL(wk, { color: w.color, shape: w.shape }); } else hs.firstElementChild.src = iconURL('w:fists', { color: '#e8c9a0', shape: 'fists' });
     $('charName').textContent = this.cb.name(); $('charLv').textContent = `Уровень ${I.level} · убийств ${I.kills}`; $('charDef').textContent = `Защита: ${I.defense}`;
     $('spPts').textContent = I.skill_points > 0 ? `(очков: ${I.skill_points})` : '';
@@ -153,7 +169,7 @@ export class UI {
       const id = `${C.type}_${C.mat}`, rec = R.all[id], w = this.init.weapons[id], cur = (I.slots[I.sel] && I.slots[I.sel][0] === 'w' && this.init.weapons[I.slots[I.sel].slice(2)]) || this.init.weapons.fists, owned = I.weapons.includes(id);
       html += '<div class="pick">' + Object.entries(R.types).map(([k, t]) => { const mc = R.materials[C.mat].color; return `<button class="chip ${C.type === k ? 'on' : ''}" data-ty="${k}"><img src="${iconURL('w:' + k + '_' + C.mat, { color: mc, shape: t.shape })}" alt="">${t.name}</button>`; }).join('') + '</div>';
       html += '<div class="pick">' + Object.entries(R.materials).map(([k, m]) => `<button class="chip ${C.mat === k ? 'on' : ''} ${(inv[k] || 0) < (R.all[C.type + '_' + k].cost[k] || 0) ? 'lack' : ''}" data-m="${k}"><img src="${iconURL('r:' + k)}" alt="">${m.name} <small>×${inv[k] || 0}</small></button>`).join('') + '</div>';
-      const avg = (x) => x.damage + x.bonus / 2, cmp = (a, b, inv2) => { const d = a - b; return Math.abs(d) < .05 ? '' : `<em class="${(d > 0) !== inv2 ? 'up' : 'dn'}">${d > 0 ? '▲' : '▼'} ${Math.abs(d) >= 10 ? Math.round(Math.abs(d)) : Math.abs(d).toFixed(1)}</em>`; };
+      const avg = (x) => x.damage + x.bonus / 2, cmp = (a, b, inv2) => { const d = a - b; return Math.abs(d) < .05 ? '' : `<em class="${(d > 0) !== inv2 ? 'up' : 'dn'}">${d > 0 ? '+' : '-'} ${Math.abs(d) >= 10 ? Math.round(Math.abs(d)) : Math.abs(d).toFixed(1)}</em>`; };
       const row = (n, val, max, a, b, inv2 = false, txt) => `<div class="stat"><span>${n}</span><div class="t"><i style="width:${clamp(val / max * 100, 3, 100)}%"></i></div><em>${txt ?? Math.round(val)}</em></div>`.replace('</em></div>', `</em></div>`);
       const spd = (x) => 1 / (x.cooldown + x.charge * .6);
       html += `<div class="card"><div class="top"><img src="${iconURL('w:' + id, { color: w.color, shape: w.shape })}" alt=""><div><div class="nm" style="color:${RARITY[w.rarity]}">${esc(w.name)}</div><div class="kind">${RARITY_RU[w.rarity]} · ${w.kind === 'bow' ? 'дальний бой' : w.kind === 'staff' ? 'посох' : 'ближний бой'}</div></div></div>`
@@ -232,11 +248,11 @@ export class UI {
     const t = $('tutorial'); if (step == null) { t.classList.add('hidden'); return; }
     const S = [
       ['Двигайся', '<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> — ходьба, <kbd>Shift</kbd> — бег. Целься мышью.'],
-      ['Собери дерево', 'Подойди к дереву с зелёной кроной и нажми <kbd>E</kbd>. Нужно ≈6 дерева.'],
+      ['Собери дерево', 'Подойди к дереву с зелёной кроной и нажми <kbd>E</kbd>. Нужно около 6 дерева.'],
       ['Открой крафт', 'Нажми <kbd>Ё</kbd> — открывается инвентарь с крафтом. Верстак не нужен.'],
-      ['Изготовь оружие', 'Вкладка «Оружие» → тип «Меч» + материал «Дерево» → <b>Изготовить</b>.'],
+      ['Изготовь оружие', 'Вкладка «Оружие»: тип «Меч», материал «Дерево», кнопка <b>Изготовить</b>.'],
       ['Возьми оружие в руки', 'Выбери предмет в нижней панели клавишами <kbd>1</kbd>–<kbd>9</kbd> или колесом мыши.'],
-      ['В бой!', 'Зажми <kbd>ЛКМ</kbd> для замаха и отпусти для удара. <kbd>Пробел</kbd> — рывок. Ищи слизней в Шепчущем лесу →'],
+      ['В бой!', 'Зажми <kbd>ЛКМ</kbd> для замаха и отпусти для удара. <kbd>Пробел</kbd> — рывок. Ищи слизней в Шепчущем лесу.'],
     ][step];
     t.innerHTML = `<b>${step + 1}/6 · ${S[0]}</b><br>${S[1]}<small>Подсказки можно скрыть — <kbd>H</kbd> показывает все клавиши</small>`; t.classList.remove('hidden');
   }

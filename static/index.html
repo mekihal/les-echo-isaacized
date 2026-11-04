@@ -19,7 +19,7 @@
       <div class="bar hp" title="Здоровье"><i id="hpFill"></i><i id="hpGhost"></i><span id="hpText">100/100</span></div>
       <div class="bar st" id="stBar" title="Выносливость — расходуется на бег, рывок и удары"><i id="stFill"></i><span id="stText">100</span></div>
       <div class="bar xp" title="Опыт"><i id="xpFill"></i></div>
-      <div class="row"><span id="gold">⛁ 0</span><span id="comboTag" class="hidden">КОМБО</span><span id="exhaust" class="hidden">ЗАПЫХАЛСЯ</span></div>
+      <div class="row"><span id="gold"><i class="coin"></i><span id="goldN">0</span></span><span id="comboTag" class="hidden">КОМБО</span><span id="exhaust" class="hidden">ЗАПЫХАЛСЯ</span></div>
     </div>
   </div>
 
@@ -57,7 +57,7 @@
         <h3>Персонаж</h3>
         <div id="charCard"><canvas id="charCv" width="18" height="26"></canvas>
           <div><div id="charName"></div><div id="charLv"></div><div id="charDef"></div></div></div>
-        <div class="eqRow"><span>Броня</span><div class="slot" id="armorSlot" title="Клик — снять"><img alt=""></div></div>
+        <div class="eqRow"><span>Броня</span><div class="slot" id="armorSlot" title="Нажми, чтобы снять броню"><img alt=""></div></div>
         <div class="eqRow"><span>В руках</span><div class="slot" id="handSlot"><img alt=""></div></div>
         <h3>Развитие <b id="spPts"></b></h3><div id="statsBox"></div>
       </section>
@@ -66,7 +66,8 @@
         <div id="mainGrid" class="grid"></div>
         <h3>Быстрая панель <small>1–9</small></h3>
         <div id="hotGrid" class="grid"></div>
-        <p class="tip">ЛКМ — взять/положить · ПКМ — использовать или надеть · Shift+ЛКМ — быстро переместить</p>
+        <div id="itemActions" class="hidden"></div>
+        <p class="tip">Нажми на предмет, чтобы взять его, и на другой слот, чтобы положить. Использовать или надеть: кнопка «Надеть» / «В руки», ПКМ, двойной клик или долгое нажатие. Shift+ЛКМ: быстро переместить.</p>
       </section>
       <section id="craft">
         <h3>Крафт <small>без верстака</small></h3>

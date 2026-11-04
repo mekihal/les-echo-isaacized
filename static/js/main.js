@@ -24,10 +24,14 @@ const mw = { x: 0, y: 0 }, aim = { x: 1, y: 0 };
 // ------------------------------------------------------------------ view ----------------
 function resize() {
   const dpr = window.devicePixelRatio || 1, S = Math.max(1, Math.round(innerHeight * dpr / VIEW_H));
-  V.W = Math.ceil(innerWidth * dpr / S); V.H = Math.ceil(innerHeight * dpr / S); V.css = S / dpr;
+  V.W = Math.ceil(innerWidth * dpr / S); V.H = Math.ceil(innerHeight * dpr / S); V.W += V.W & 1; V.H += V.H & 1; V.css = S / dpr;  // even size: the screen centre is a whole pixel
   cv.width = V.W; cv.height = V.H; cv.style.width = V.W * V.css + 'px'; cv.style.height = V.H * V.css + 'px';
   ctx = cv.getContext('2d', { alpha: false }); ctx.imageSmoothingEnabled = false;
   document.documentElement.style.setProperty('--u', V.css + 'px');
+  // The pixel font (Tiny5) has an 8-px grid: keep every text size a multiple of 8 *device* pixels so glyphs stay crisp.
+  for (const [k, n] of Object.entries({ xs: 4.4, sm: 5, md: 6, lg: 7, xl: 9, xxl: 12, title: 15 })) {
+    const phys = Math.max(8, Math.round(n * V.css * dpr / 8) * 8); document.documentElement.style.setProperty('--fs-' + k, phys / dpr + 'px');
+  }
   for (const [k, a] of [['vig', .5], ['vigRed', 1]]) {
     const c = mk(V.W, V.H), g = c.getContext('2d'), gr = g.createRadialGradient(V.W / 2, V.H / 2, V.H * .38, V.W / 2, V.H / 2, Math.hypot(V.W, V.H) * .55);
     gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, k === 'vig' ? 'rgba(0,0,0,.55)' : 'rgba(190,20,20,.8)'); g.fillStyle = gr; g.fillRect(0, 0, V.W, V.H); V[k] = c;
@@ -69,7 +73,8 @@ function start() {
     onSnap: onSnap, onEvent: onEvent,
     onClose: () => { ui.conn('Соединение потеряно.<br><small>Обнови страницу, чтобы вернуться в лес.</small>'); },
   });
-  window.__echo = { net, fx, ui, cam, me, atk }; // debug handle: inspect in the browser console
+  window.__echo = { net, fx, ui, cam, me, atk, startSwing }; // debug handle: inspect in the browser console
+  document.fonts?.load('8px Pix', 'Лес Эхо 0123');
   net.connect(); requestAnimationFrame(frame);
 }
 
@@ -134,7 +139,8 @@ function startSwing(e, wid, kind, charge, combo, ang, wx, wy) {
   const arc = (w.shape === 'spear' ? .35 : w.shape === 'axe' ? 2.6 : w.shape === 'dagger' ? 1.7 : 2.1) * (heavy ? 1.25 : 1), dur = w.shape === 'dagger' ? .12 : heavy ? .22 : .17;
   e.swing = { t: 0, dur, kind: w.shape, dir: e.swingDir, arc, heavy };
   const reach = (w.range || 40) + 8 + charge * 14;
-  fx.slash(wx, wy - 6, ang + (w.shape === 'spear' ? 0 : -e.swingDir * .2), arc * (w.shape === 'spear' ? 1 : .9), reach, w.shape === 'fists' ? '#f6e6c8' : w.color, dur + .05, heavy ? 5 : 3);
+  // the blade is flipped when aiming left (drawWeapon: flipY), so its sweep direction is swingDir * flipY: the trail must follow it
+  fx.slash(wx, wy - 6, ang, arc * (w.shape === 'spear' ? 1 : .95), reach, w.shape === 'fists' ? '#f6e6c8' : w.color, dur + .05, heavy ? 5 : 3, e.swingDir * (Math.cos(ang) < 0 ? -1 : 1));
   if (e === me) { sfx.swing(heavy ? 1 : 0); me.kick = [Math.cos(ang) * 3, Math.sin(ang) * 2]; }
 }
 const curWeapon = () => init.weapons[inv?.weapon] || init.weapons.fists;
@@ -143,7 +149,7 @@ function attackStart(now) {
   if (!canAct() || atk.charging) return; const w = curWeapon();
   if (now - atk.lastRel < w.cooldown * 1000) return;
   if (stSm < 5) { sfx.deny(); return; }
-  if (w.kind === 'bow' && !(inv.inventory.arrows > 0)) { ui.addChat('Колчан пуст — изготовь стрелы: Ё → Расходники.', 'bad'); sfx.deny(); return; }
+  if (w.kind === 'bow' && !(inv.inventory.arrows > 0)) { ui.addChat('Колчан пуст — изготовь стрелы: Ё, вкладка «Расходники».', 'bad'); sfx.deny(); return; }
   atk.charging = true; atk.t0 = now; atk.pending = 0; net.send({ type: 'attack_start', aim_x: aim.x, aim_y: aim.y });
 }
 function attackRelease(now) {
@@ -303,10 +309,12 @@ const draws = []; let drawN = 0;
 const push = (y, k, a, b) => { let o = draws[drawN]; if (!o) o = draws[drawN] = { y: 0, k: 0, a: null, b: null }; o.y = y; o.k = k; o.a = a; o.b = b; drawN++; };
 const tmpDecor = [];
 function render(now, dt) {
-  const [shx, shy] = fx.shakeOffset(), W = V.W, H = V.H, cx = cam.x, cy = cam.y;
+  const [shx, shy] = fx.shakeOffset(), W = V.W, H = V.H;
+  CPX = Math.round(cam.x * PX); CPY = Math.round(cam.y * PX); const cx = CPX / PX, cy = CPY / PX;  // camera snapped to whole art pixels: no relative jitter
   ctx.setTransform(1, 0, 0, 1, shx, shy);
   const range = world.draw(ctx, cx, cy, W, H, PX);
   fx.drawDecals(ctx, cx, cy, W, H);
+  fx.drawParticles(ctx, cx, cy, W, H, 0);  // footstep dust lies on the ground, under every character
   const x0 = cx - W / 2 / PX, x1 = cx + W / 2 / PX, y0 = cy - H / 2 / PX, y1 = cy + H / 2 / PX;
   groundLayer(now, x0, y0, x1, y1);
   drawN = 0; tmpDecor.length = 0; world.collectDecor(range, tmpDecor, x0, y0, x1, y1);
@@ -326,7 +334,8 @@ function render(now, dt) {
   edgeMarkers();
   const z = world.zoneAt(net.me.x).id; if (z === 'glacier') { ctx.fillStyle = 'rgba(200,240,255,.06)'; ctx.fillRect(0, 0, W, H); } else if (z === 'abyss' || z === 'obsidian') { ctx.fillStyle = 'rgba(30,10,50,.12)'; ctx.fillRect(0, 0, W, H); }
 }
-const sxOf = (wx) => Math.floor((wx - cam.x) * PX + V.W / 2), syOf = (wy) => Math.floor((wy - cam.y) * PX + V.H / 2);
+let CPX = 0, CPY = 0;
+const sxOf = (wx) => Math.floor(wx * PX) - CPX + (V.W >> 1), syOf = (wy) => Math.floor(wy * PX) - CPY + (V.H >> 1);
 function dotRing(cx, cy, r, col, n = 36, ry = .75, a = 1) { ctx.fillStyle = col; ctx.globalAlpha = a; for (let k = 0; k < n; k++) { const t = k / n * 6.283; ctx.fillRect(Math.floor(cx + Math.cos(t) * r), Math.floor(cy + Math.sin(t) * r * ry), 1, 1); } ctx.globalAlpha = 1; }
 function groundLayer(now, x0, y0, x1, y1) {
   for (const s of init.power_sites) if (s.x > x0 - s.radius && s.x < x1 + s.radius && s.y > y0 - s.radius && s.y < y1 + s.radius) { const px = sxOf(s.x), py = syOf(s.y); dotRing(px, py, s.radius * PX, '#9fffc8', 60, .75, .45); dotRing(px, py, s.radius * PX * .6, '#9fffc8', 36, .75, .25 + .2 * Math.sin(tClock * 2)); if (Math.hypot(s.x - net.me.x, s.y - net.me.y) < s.radius) drawLabel(s.x, s.y - 4, s.name, '#9fffc8'); }
@@ -394,19 +403,19 @@ function drawPlayer(e, now, dt) {
   if (isMe && row.ga) { ctx.fillStyle = '#120d0a'; ctx.fillRect(px - 8, py + 3, 17, 4); ctx.fillStyle = '#6fd06a'; ctx.fillRect(px - 7, py + 4, Math.round(15 * row.ga), 2); }
 }
 function drawWeapon(e, px, py, dir, now) {
-  const w = init.weapons[e.w] || init.weapons.fists, a = Math.atan2(e.fy ?? 0, e.fx ?? 1), c = e.at || 0, sw = e.swing, hx = px + Math.round(Math.cos(a) * 4), hy = py - 9 + Math.round(Math.sin(a) * 3);
+  const w = init.weapons[e.w] || init.weapons.fists, a = Math.atan2(e.fy ?? 0, e.fx ?? 1), c = e.at || 0, sw = e.swing, hx = px + Math.round(Math.cos(a) * 3), hy = py - 9 + Math.round(Math.sin(a) * 3);
   const swinging = sw && sw.t < sw.dur, p = swinging ? sw.t / sw.dur : 0, ease = 1 - (1 - p) * (1 - p) * (1 - p);
   if (w.shape === 'fists') {
     const tone = TONES[(e.sk?.[0] || 0) % 6]; let reach = 0; if (swinging) reach = Math.sin(p * 3.1416) * 11; else if (c > 0) reach = -2 * c; else return;
     const fxp = Math.round(hx + Math.cos(a) * (4 + reach)), fyp = Math.round(hy + Math.sin(a) * (3 + reach * .8)); ctx.fillStyle = '#14100c'; ctx.fillRect(fxp - 3, fyp - 3, 6, 6); ctx.fillStyle = tone; ctx.fillRect(fxp - 2, fyp - 2, 4, 4); ctx.fillStyle = '#fff'; ctx.globalAlpha = .35; ctx.fillRect(fxp - 2, fyp - 2, 2, 1); ctx.globalAlpha = 1; return;
   }
   const spr = weaponSprite(w.shape, w.color), flipY = Math.cos(a) < 0 ? -1 : 1; let off = 0, reach = 0, scale = 1;
-  if (w.kind === 'bow') { off = 0; reach = 5 - (swinging ? Math.sin(p * 3.14) * -2 : 0); }
+  if (w.kind === 'bow') { off = 0; reach = 2 - (swinging ? Math.sin(p * 3.14) * -2 : 0); }
   else if (swinging) { const dirS = sw.dir * flipY; off = (-sw.arc / 2 + ease * sw.arc) * dirS - (sw.kind === 'spear' ? 0 : 0); if (w.shape === 'spear') { off = 0; reach = Math.sin(p * 3.1416) * 12; } if (sw.heavy) scale = 1.15; }
   else if (c > 0) { off = -(.25 + 1.05 * c) * (e.swingDir || 1) * flipY; reach = -2.5 * c; if (c >= 1) { off += Math.sin(now * .05) * .06; } }
   else { off = .55 * flipY * (e.swingDir || 1) * -1; reach = -1; }
   ctx.save(); ctx.translate(hx + Math.round(Math.cos(a) * reach), hy + Math.round(Math.sin(a) * reach)); ctx.rotate(a + off); if (flipY < 0) ctx.scale(1, -1); if (scale !== 1) ctx.scale(scale, scale);
-  if (w.kind === 'bow') { ctx.drawImage(spr, 2, -9); if (c > 0) { ctx.fillStyle = '#e8e4d0'; ctx.fillRect(14 - Math.round(c * 7), -1, Math.round(c * 7), 1); ctx.fillStyle = '#b8a47a'; ctx.fillRect(14 - Math.round(c * 7), 0, 14, 1); } }
+  if (w.kind === 'bow') { ctx.drawImage(spr, -9, -9); if (c > 0) { const pull = Math.round(c * 7); ctx.fillStyle = '#e8e4d0'; ctx.fillRect(3 - pull, -1, pull, 1); ctx.fillStyle = '#b8a47a'; ctx.fillRect(3 - pull, 0, 14 + pull, 1); } }
   else ctx.drawImage(spr, -5, -9);
   ctx.restore();
   if (w.kind === 'staff' && c > .3 && Math.random() < .5) fx.add(e.x + Math.cos(a) * 36, e.y - 14 + Math.sin(a) * 24, 10, 0, 0, 20, .3, 1, w.color, 2);

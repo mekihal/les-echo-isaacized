@@ -39,10 +39,10 @@ export class FX {
     this.decal(x + nx * 8, y + ny * 8, kill ? 3 : 2, c[2], 22);
     if (kill) { for (let i = 0; i < 6; i++) this.decal(x + (Math.random() - .5) * 46 + nx * 14, y + (Math.random() - .5) * 46 + ny * 14, 2 + (Math.random() * 2 | 0), c[i % 3], 36); }
   }
-  dust(x, y, vx, vy, n = 3) { for (let i = 0; i < n; i++) this.add(x + (Math.random() - .5) * 8, y, 1, -vx * .12 + (Math.random() - .5) * 40, -vy * .12 + (Math.random() - .5) * 30, 14 + Math.random() * 20, .25 + Math.random() * .2, 1 + (Math.random() < .3), Math.random() < .5 ? '#cfc8a8' : '#a89f82', 2); }
+  dust(x, y, vx, vy, n = 3) { for (let i = 0; i < n; i++) this.add(x + (Math.random() - .5) * 8, y, 1, -vx * .12 + (Math.random() - .5) * 40, -vy * .12 + (Math.random() - .5) * 30, 14 + Math.random() * 20, .25 + Math.random() * .2, 1 + (Math.random() < .3), Math.random() < .5 ? '#cfc8a8' : '#a89f82', 3); }
   sparks(x, y, col, n = 8, speed = 220) { for (let i = 0; i < n * this.quality; i++) { const a = Math.random() * 6.283, s = speed * (.3 + Math.random()); this.add(x, y, 6, Math.cos(a) * s, Math.sin(a) * s, 40 + Math.random() * 90, .2 + Math.random() * .3, 1, col, 0); } }
   burst(x, y, cols, n, speed, up = 120, life = .8) { for (let i = 0; i < n * this.quality; i++) { const a = Math.random() * 6.283, s = speed * Math.random(); this.add(x, y, 4, Math.cos(a) * s, Math.sin(a) * s, up * Math.random(), life * (.5 + Math.random() * .5), 1 + (Math.random() < .25), cols[(Math.random() * cols.length) | 0], 0); } }
-  slash(x, y, ang, span, r, col, dur = .16, thick = 3) { this.slashes.push({ x, y, a: ang, s: span, r, t: 0, d: dur, col, th: thick }); if (this.slashes.length > 24) this.slashes.shift(); }
+  slash(x, y, ang, span, r, col, dur = .16, thick = 3, dir = 1) { this.slashes.push({ x, y, a: ang, s: span, r, t: 0, d: dur, col, th: thick, dir }); if (this.slashes.length > 24) this.slashes.shift(); }
   ring(x, y, r, col, dur = .35) { this.rings.push({ x, y, r, t: 0, d: dur, col }); if (this.rings.length > 16) this.rings.shift(); }
   text(x, y, str, col, big = false) { this.texts.push({ x: x + (Math.random() - .5) * 10, y, s: String(str), col, big, t: 0, vy: -60 - (big ? 20 : 0) }); if (this.texts.length > 36) this.texts.shift(); }
   shake(p, dx = 0, dy = 0) { this.trauma = Math.min(1, this.trauma + p); this.kx += dx * p * 5; this.ky += dy * p * 5; }
@@ -59,9 +59,9 @@ export class FX {
       this.life[i] -= dt; if (this.life[i] <= 0) { this.kill(i); continue; }
       const f = this.flag[i];
       this.x[i] += this.vx[i] * dt; this.y[i] += this.vy[i] * dt;
-      if (f !== 2) { this.vz[i] -= g; this.z[i] += this.vz[i] * dt; } else { this.z[i] += 8 * dt; }
+      if (f < 2) { this.vz[i] -= g; this.z[i] += this.vz[i] * dt; } else { this.z[i] += 8 * dt; }
       this.vx[i] *= drag; this.vy[i] *= drag;
-      if (this.z[i] <= 0 && f !== 2) {
+      if (this.z[i] <= 0 && f < 2) {
         if (f === 1) { if (Math.random() < .55) this.decal(this.x[i], this.y[i], this.size[i], this.col[i], 20 + Math.random() * 12); this.kill(i); continue; }
         this.z[i] = 0; this.vz[i] *= -.35; this.vx[i] *= .5; this.vy[i] *= .5; if (Math.abs(this.vz[i]) < 8) this.vz[i] = 0;
       }
@@ -85,9 +85,11 @@ export class FX {
     }
     ctx.globalAlpha = 1;
   }
-  drawParticles(ctx, cx, cy, W, H) {
+  // pass 0 = ground dust (drawn under characters), pass 1 = everything else
+  drawParticles(ctx, cx, cy, W, H, pass = 1) {
     let last = '';
     for (let i = 0; i < this.n; i++) {
+      if ((this.flag[i] === 3) !== (pass === 0)) continue;
       const sx = Math.floor((this.x[i] - cx) * PX + W / 2), sy = Math.floor((this.y[i] - cy) * PX + H / 2 - this.z[i] * .5);
       if (sx < -4 || sx > W + 4 || sy < -4 || sy > H + 4) continue;
       const a = this.life[i] / this.max[i]; ctx.globalAlpha = a < .3 ? a / .3 : 1;
@@ -99,7 +101,7 @@ export class FX {
     for (const s of this.slashes) {
       const p = s.t / s.d, sx = (s.x - cx) * PX + W / 2, sy = (s.y - cy) * PX + H / 2, r = s.r * PX, steps = 16;
       for (let k = 0; k <= steps; k++) {
-        const u = k / steps, a = s.a + (u - .5) * s.s, head = clamp(p * 1.4, 0, 1);
+        const u = k / steps, a = s.a + (s.dir < 0 ? (.5 - u) : (u - .5)) * s.s, head = clamp(p * 1.4, 0, 1);
         if (u > head || u < head - .6) continue;
         const fade = 1 - (head - u) / .6, th = Math.max(1, Math.round(s.th * fade));
         ctx.globalAlpha = (1 - p * .7) * fade; ctx.fillStyle = k % 3 === 0 ? '#ffffff' : s.col;

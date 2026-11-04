@@ -997,7 +997,10 @@ def attack_release(p: dict[str, Any], now: float, ax: float, ay: float) -> None:
         if mob["hp"] <= 0: continue
         dx, dy = mob["x"] - p["x"], mob["y"] - p["y"]
         dist = math.hypot(dx, dy)
-        if dist <= reach and dist > .01 and (dx * ax + dy * ay) / dist >= spec["arc"]:
+        # measure to the mob's edge (not its centre) plus a small latency allowance:
+        # clients draw mobs ~85 ms in the past, so a hit that looks like contact must count.
+        edge = MOB_R.get(mob["kind"], 20) * .75 + 8
+        if dist <= reach + edge and dist > .01 and (dx * ax + dy * ay) / dist >= spec["arc"]:
             hits.append((dist, mob))
     hits.sort(key=lambda row: row[0])
     max_hits = 5 if weapon_id == "scythe" else 4 if weapon_id in ("axe", "astral_blade", "obsidian_axe") else 3 if weapon_id in ("iron_sword", "archon_staff", "elder_staff") else 2 if weapon_id in ("spear", "daggers", "stormbrand") else 1
