@@ -64,15 +64,33 @@ function playerFrame(dir, fr, sk) {
   return outline(cv);
 }
 const playerCache = new Map();
-export function playerSprite(skin, dir, frame) {
-  const key = skin.join(',');
-  let s = playerCache.get(key); if (!s) { s = {}; playerCache.set(key, s); }
-  const k = dir + frame; return s[k] || (s[k] = playerFrame(dir, frame, skin));
+
+// 35x35 sprite atlas derived from the supplied PLR-idle / PLR-blink references.
+// Rows: front idle, front blink, front walk, side idle+walk, back idle+walk, side blink.
+const PLAYER_ATLAS_B64 = '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';
+const PLAYER_ART = { idleFront: [], blinkFront: [], walkFront: [], idleSide: null, walkSide: [], idleBack: null, walkBack: [], blinkSide: [] };
+let playerArtReady = false;
+if (typeof Image !== 'undefined') {
+  const atlas = new Image();
+  atlas.onload = () => {
+    const cell = (col, row) => { const c = mk(35, 35), g = c.getContext('2d'); g.imageSmoothingEnabled = false; g.drawImage(atlas, col * 35, row * 35, 35, 35, 0, 0, 35, 35); return c; };
+    for (let i = 0; i < 5; i++) { PLAYER_ART.idleFront.push(cell(i, 0)); PLAYER_ART.blinkFront.push(cell(i, 1)); PLAYER_ART.blinkSide.push(cell(i, 5)); }
+    for (let i = 0; i < 4; i++) { PLAYER_ART.walkFront.push(cell(i, 2)); PLAYER_ART.walkSide.push(cell(i + 1, 3)); PLAYER_ART.walkBack.push(cell(i + 1, 4)); }
+    PLAYER_ART.idleSide = cell(0, 3); PLAYER_ART.idleBack = cell(0, 4); playerArtReady = true;
+  };
+  atlas.src = 'data:image/png;base64,' + PLAYER_ATLAS_B64;
 }
-export function portrait(skin) {  // 16x16 head icon for HUD
-  const cv = mk(16, 16), g = cv.getContext('2d'), f = playerSprite(skin, 'd', 0);
-  g.drawImage(f, 2, 2, 14, 12, 1, 3, 14, 12); const c2 = mk(16, 16), g2 = c2.getContext('2d'); g2.drawImage(f, 1, 1, 16, 12, 0, 2, 16, 12);
-  return c2;
+export function playerSprite(skin, dir, frame = 0, mode = 'idle') {
+  if (!playerArtReady) return playerFrame(dir, mode === 'walk' ? 1 + (frame & 1) : 0, skin);
+  const facing = dir === 'u' ? 'back' : dir === 's' ? 'side' : 'front', i = frame | 0;
+  if (mode === 'walk') return PLAYER_ART['walk' + (facing === 'front' ? 'Front' : facing === 'side' ? 'Side' : 'Back')][i % 4];
+  if (mode === 'blink' && facing !== 'back') return (facing === 'front' ? PLAYER_ART.blinkFront : PLAYER_ART.blinkSide)[i % 5];
+  if (facing === 'front') return PLAYER_ART.idleFront[i % 5];
+  return facing === 'side' ? PLAYER_ART.idleSide : PLAYER_ART.idleBack;
+}
+export function portrait(skin) {
+  const cv = mk(16, 16), g = cv.getContext('2d'), f = playerSprite(skin, 'd', 0, 'idle');
+  g.imageSmoothingEnabled = false; g.drawImage(f, 9, 4, 18, 15, 0, 0, 16, 16); return cv;
 }
 
 // ------------------------------------------------------------------ mobs ---
