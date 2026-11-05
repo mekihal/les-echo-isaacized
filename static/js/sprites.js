@@ -63,6 +63,7 @@ function playerFrame(dir, fr, sk) {
   else if (hat === 5) { R(g, shade(O, .85), 3, 1, 12, 3); R(g, shade(O, .85), 3, 4, 2, 8); R(g, shade(O, .85), 13, 4, 2, 8); }
   return outline(cv);
 }
+export function legacyPlayerSprite(skin, dir, frame = 0) { return playerFrame(dir, frame, skin); }
 const playerCache = new Map();
 
 // Supplied sprite sheet: 6 frames x 8 directions, arranged clockwise from right.
