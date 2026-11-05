@@ -1,7 +1,7 @@
 // Les Echo 2.0 client: input, camera, combat feel and the render pipeline (low-res canvas, integer upscale).
 import { PX, VIEW_H, BLOOD_BY_KIND, TONES, clamp, lerp, expo, hash2 } from './config.js';
 import { World } from './world.js';
-import { mk, playerSprite, mobSprite, weaponSprite, decorSprites, nodeSprite, whiteOf } from './sprites.js';
+import { mk, playerSprite, legacyPlayerSprite, mobSprite, weaponSprite, decorSprites, nodeSprite, whiteOf } from './sprites.js';
 import { FX, drawGlyphs } from './fx.js';
 import { Net } from './net.js';
 import { UI, NODE_NAMES } from './ui.js';
@@ -364,7 +364,7 @@ function drawKeeper(now) {
   ctx.globalAlpha = .1; ctx.fillStyle = '#ffb040'; for (let r = 40; r > 10; r -= 10) { ctx.fillRect(fx0 - r, fy0 - r * .6, r * 2, r * 1.2); } ctx.globalAlpha = 1;
   if (Math.random() < .12) fx.add(kp[0] + 50 + (Math.random() - .5) * 8, kp[1] + 40, 8, (Math.random() - .5) * 20, -5, 0, .8, 1, '#ffb040', 2);
   // keeper
-  shadow(px, py, 7); const spr = playerSprite([2, 5, 1, 3, 0, 2], 'd', Math.floor(now / 200) % 5, 'idle'); ctx.drawImage(spr, px - 17, py - 31 + Math.round(Math.sin(tClock * 2) * .6));
+  shadow(px, py, 6); const spr = legacyPlayerSprite([2, 5, 1, 3, 0, 2], 'd', 0); ctx.drawImage(spr, px - 9, py - 24 + Math.round(Math.sin(tClock * 2) * .6));
   const d = Math.hypot(kp[0] - net.me.x, kp[1] - net.me.y); if (d < 120) { ctx.fillStyle = '#ffe28a'; ctx.fillRect(px - 1, py - 32 + Math.round(Math.sin(tClock * 6)), 3, 5); ctx.fillRect(px - 1, py - 25 + Math.round(Math.sin(tClock * 6)), 3, 2); }
 }
 function drawMob(e, now, dt) {
@@ -384,28 +384,22 @@ function drawPlayer(e, now, dt) {
   const isMe = e.isMe; if (!isMe && e.rs) return; if (isMe && dead) return;
   const px = sxOf(e.x), py = syOf(e.y), sp = Math.hypot(e.vx, e.vy), moving = sp > 28;
   e.phase = (e.phase || 0) + sp * dt * .05;
-  const fxv = e.fx ?? 1, fyv = e.fy ?? 0, dir = Math.abs(fyv) > Math.abs(fxv) * 1.1 ? (fyv < 0 ? 'u' : 'd') : 's', sk = e.sk || [0, 0, 0, 0, 0, 0];
-  let mode = 'idle', frame = Math.floor(now / 200) % 5;
-  if (moving) {
-    mode = 'walk'; frame = Math.floor(e.phase) & 3; e.idleTime = 0; e.blinkStart = 0; e.nextBlinkAt = 5;
-  } else {
-    e.idleTime = (e.idleTime || 0) + dt;
-    if (!e.nextBlinkAt) e.nextBlinkAt = 4.5 + Math.random() * 2.5;
-    if (!e.blinkStart && e.idleTime >= e.nextBlinkAt) { e.blinkStart = now; e.nextBlinkAt = e.idleTime + 5 + Math.random() * 3; }
-    if (e.blinkStart && now - e.blinkStart < 500 && dir !== 'u') { mode = 'blink'; frame = Math.min(4, Math.floor((now - e.blinkStart) / 100)); }
-    else { if (e.blinkStart && now - e.blinkStart >= 500) e.blinkStart = 0; frame = dir === 'd' ? Math.floor(now / 200) % 5 : 0; }
-  }
-  let spr = playerSprite(sk, dir, frame, mode), img = dir === 's' && fxv < 0 ? flipOf(spr) : spr;
+  const fxv = e.fx ?? 1, fyv = e.fy ?? 0, angle = Math.atan2(fyv, fxv);
+  // Eight directions clockwise: right, down-right, down, down-left, left, up-left, up, up-right.
+  const dir = (Math.round(angle / (Math.PI / 4)) + 8) % 8, sk = e.sk || [0, 0, 0, 0, 0, 0];
+  const mode = moving ? 'walk' : 'idle';
+  const frame = moving ? Math.floor(e.phase) % 6 : 0;
+  const img = playerSprite(sk, dir, frame, mode);
   e.flash = Math.max(0, (e.flash || 0) - dt); e.sq = Math.max(0, (e.sq || 0) - dt * 12);
   if (e.swing) { e.swing.t += dt; if (e.swing.t >= e.swing.dur + .08) e.swing = null; }
   if (e.dg || e.dashT > 0) { e.trail = e.trail || []; if (!e.trail.length || now - e.trail[e.trail.length - 1].t > 30) e.trail.push({ x: e.x, y: e.y, t: now, img }); if (e.trail.length > 6) e.trail.shift(); } else if (e.trail?.length) e.trail.shift();
-  if (e.trail) for (const g of e.trail) { const a = Math.max(0, .5 - (now - g.t) / 260); if (a > 0) { ctx.globalAlpha = a; ctx.drawImage(whiteOf(g.img), sxOf(g.x) - 17, syOf(g.y) - 31); } } ctx.globalAlpha = 1;
+  if (e.trail) for (const g of e.trail) { const a = Math.max(0, .5 - (now - g.t) / 260); if (a > 0) { ctx.globalAlpha = a; ctx.drawImage(whiteOf(g.img), sxOf(g.x) - 13, syOf(g.y) - 35); } } ctx.globalAlpha = 1;
   shadow(px, py, 7);
   const bob = moving ? ((Math.floor(e.phase * 2) & 1) ? -1 : 0) : (Math.sin(tClock * 3 + (e.x | 0)) > .8 ? -1 : 0), sq = Math.round(e.sq || 0) + (moving && sp > 230 ? 0 : 0);
   const kick = e.kick || [0, 0]; if (e.kick) { e.kick[0] *= Math.exp(-16 * dt); e.kick[1] *= Math.exp(-16 * dt); }
-  const bx = px - 17 + Math.round(kick[0]) + (moving ? Math.round(Math.sign(e.vx) * Math.min(1, Math.abs(e.vx) / 200)) : 0) - (sq >> 1), by = py - 31 + bob + Math.round(kick[1]) + sq;
-  const behind = dir === 'u'; if (behind) drawWeapon(e, px, py, dir, now);
-  const lean = img; ctx.drawImage(e.flash > 0 ? whiteOf(lean) : lean, bx, by, 35 + sq, 35 - sq);
+  const bx = px - 13 + Math.round(kick[0]) + (moving ? Math.round(Math.sign(e.vx) * Math.min(1, Math.abs(e.vx) / 200)) : 0) - (sq >> 1), by = py - 35 + bob + Math.round(kick[1]) + sq;
+  const behind = dir >= 5; if (behind) drawWeapon(e, px, py, dir, now);
+  const lean = img; ctx.drawImage(e.flash > 0 ? whiteOf(lean) : lean, bx, by, 27 + sq, 38 - sq);
   if (!behind) drawWeapon(e, px, py, dir, now);
   // overhead: name, health (others), charge bar (self)
   if (!isMe) { const nm = e.name || '?'; drawLabel(e.x, e.y - 36, nm, '#cfe8ff'); const hw = 16, bx2 = px - 8, by2 = py - 29; ctx.fillStyle = '#120d0a'; ctx.fillRect(bx2 - 1, by2 - 1, hw + 2, 4); ctx.fillStyle = '#d6453d'; ctx.fillRect(bx2, by2, Math.round(hw * (e.hp || 0) / (e.mh || 1)), 2); }

@@ -34,7 +34,7 @@ export class UI {
   }
   setSkin(skin) {
     this.skin = skin; const pc = $('portraitCv'), g = pc.getContext('2d'); g.clearRect(0, 0, 16, 16); g.drawImage(portrait(skin), 0, 0);
-    const cc = $('charCv').getContext('2d'); cc.clearRect(0, 0, 18, 26); cc.drawImage(playerSprite(skin, 'd', 0), 0, 0);
+    const cc = $('charCv').getContext('2d'); cc.clearRect(0, 0, 18, 26); cc.imageSmoothingEnabled = false; cc.drawImage(playerSprite(skin, 2, 0, 'idle'), 0, 0, 18, 26);
   }
   buildLegend() {
     const rows = [['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>', 'движение'], ['<kbd>Shift</kbd>', 'бег (тратит стамину)'], ['<kbd>Пробел</kbd>', 'рывок-уклонение'],
