@@ -1,7 +1,7 @@
 // Les Echo 2.0 client: input, camera, combat feel and the render pipeline (low-res canvas, integer upscale).
 import { PX, VIEW_H, BLOOD_BY_KIND, TONES, clamp, lerp, expo, hash2 } from './config.js';
 import { World } from './world.js';
-import { mk, playerSprite, mobSprite, weaponSprite, decorSprites, nodeSprite, whiteOf } from './sprites.js';
+import { mk, playerSprite, legacyPlayerSprite, mobSprite, weaponSprite, decorSprites, nodeSprite, whiteOf } from './sprites.js';
 import { FX, drawGlyphs } from './fx.js';
 import { Net } from './net.js';
 import { UI, NODE_NAMES } from './ui.js';
@@ -364,7 +364,7 @@ function drawKeeper(now) {
   ctx.globalAlpha = .1; ctx.fillStyle = '#ffb040'; for (let r = 40; r > 10; r -= 10) { ctx.fillRect(fx0 - r, fy0 - r * .6, r * 2, r * 1.2); } ctx.globalAlpha = 1;
   if (Math.random() < .12) fx.add(kp[0] + 50 + (Math.random() - .5) * 8, kp[1] + 40, 8, (Math.random() - .5) * 20, -5, 0, .8, 1, '#ffb040', 2);
   // keeper
-  shadow(px, py, 7); const spr = playerSprite([2, 5, 1, 3, 0, 2], 'd', Math.floor(now / 200) % 5, 'idle'); ctx.drawImage(spr, px - 13, py - 35 + Math.round(Math.sin(tClock * 2) * .6));
+  shadow(px, py, 6); const spr = legacyPlayerSprite([2, 5, 1, 3, 0, 2], 'd', 0); ctx.drawImage(spr, px - 9, py - 24 + Math.round(Math.sin(tClock * 2) * .6));
   const d = Math.hypot(kp[0] - net.me.x, kp[1] - net.me.y); if (d < 120) { ctx.fillStyle = '#ffe28a'; ctx.fillRect(px - 1, py - 32 + Math.round(Math.sin(tClock * 6)), 3, 5); ctx.fillRect(px - 1, py - 25 + Math.round(Math.sin(tClock * 6)), 3, 2); }
 }
 function drawMob(e, now, dt) {
