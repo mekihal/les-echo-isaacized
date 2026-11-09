@@ -9,6 +9,7 @@ import re
 import math
 import random
 import sqlite3
+import logging
 import time
 import uuid
 import copy
@@ -34,11 +35,28 @@ MAX_PLAYERS = 8
 # SQLite work is serialized on one worker thread so it never blocks the asyncio loop.
 DB_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="echo-db")
 PASSWORD_HASH_SEMAPHORE = asyncio.Semaphore(2)
+PERF_LOG_INTERVAL = 30.0
+PERF_SAMPLE_LIMIT = 300
+DB_CALL_SAMPLES: deque[float] = deque(maxlen=PERF_SAMPLE_LIMIT)
+PERF_LOGGER = logging.getLogger("uvicorn.error")
+
+
+def _percentile(samples: deque[float], fraction: float = 0.95) -> float:
+    if not samples:
+        return 0.0
+    ordered = sorted(samples)
+    index = min(len(ordered) - 1, int((len(ordered) - 1) * fraction))
+    return ordered[index]
 
 
 async def db_call(function: Any, *args: Any) -> Any:
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(DB_EXECUTOR, function, *args)
+    started = time.perf_counter()
+    try:
+        return await loop.run_in_executor(DB_EXECUTOR, function, *args)
+    finally:
+        # Includes time waiting in the single-thread DB queue as well as SQL time.
+        DB_CALL_SAMPLES.append((time.perf_counter() - started) * 1000.0)
 
 
 async def password_hash_async(password: str, salt: bytes) -> bytes:
@@ -2569,10 +2587,19 @@ async def push_state(pid: str, ws: WebSocket, now: float) -> None:
 async def world_tick() -> None:
     last_saved = time.monotonic()
     last_tick = last_saved
+    last_perf_report = last_saved
     next_state_send = last_saved + STATE_SEND_INTERVAL
+    tick_work_samples: deque[float] = deque(maxlen=PERF_SAMPLE_LIMIT)
+    tick_interval_samples: deque[float] = deque(maxlen=PERF_SAMPLE_LIMIT)
+    late_ticks = 0
     while True:
+        tick_started = time.perf_counter()
         now = time.monotonic()
-        dt = min(.1, max(.001, now - last_tick))
+        tick_interval = now - last_tick
+        tick_interval_samples.append(tick_interval * 1000.0)
+        if tick_interval > TICK * 1.5:
+            late_ticks += 1
+        dt = min(.1, max(.001, tick_interval))
         last_tick = now
         for pid, p in list(players.items()):
             if p["respawn_at"] and p["respawn_at"] <= now:
@@ -2842,7 +2869,30 @@ async def world_tick() -> None:
                     *[push_state(pid, ws, now) for pid, ws in v2_clients],
                     return_exceptions=True,
                 )
-        await asyncio.sleep(max(0.0, TICK - (time.monotonic() - now)))
+        tick_work_samples.append((time.perf_counter() - tick_started) * 1000.0)
+        if now - last_perf_report >= PERF_LOG_INTERVAL:
+            max_queue = max((len(queue) for queue in outbound_queues.values()), default=0)
+            PERF_LOGGER.info(
+                "echo perf: tick_work_p95=%.2fms tick_work_max=%.2fms "
+                "tick_interval_p95=%.2fms late_ticks=%d/%d db_call_p95=%.2fms "
+                "players=%d mobs=%d arrows=%d outbound_queue_max=%d",
+                _percentile(tick_work_samples),
+                max(tick_work_samples, default=0.0),
+                _percentile(tick_interval_samples),
+                late_ticks,
+                len(tick_interval_samples),
+                _percentile(DB_CALL_SAMPLES),
+                len(players),
+                len(mobs),
+                len(arrows),
+                max_queue,
+            )
+            DB_CALL_SAMPLES.clear()
+            tick_work_samples.clear()
+            tick_interval_samples.clear()
+            late_ticks = 0
+            last_perf_report = now
+        await asyncio.sleep(max(0.0, TICK - (time.perf_counter() - tick_started)))
 
 
 @app.on_event("startup")
