@@ -549,6 +549,13 @@ def snapshot(for_id: str) -> dict[str, Any]:
                                 for field in ground_effects]}
 
 
+async def _close_slow_socket(socket: WebSocket) -> None:
+    try:
+        await socket.close(code=1013, reason="SLOW_CONSUMER")
+    except Exception:
+        pass
+
+
 def _disconnect_slow_client(pid: str) -> None:
     if pid in closing_clients:
         return
@@ -558,7 +565,7 @@ def _disconnect_slow_client(pid: str) -> None:
         writer.cancel()
     socket = clients.get(pid)
     if socket:
-        asyncio.create_task(socket.close(code=1013, reason="SLOW_CONSUMER"))
+        asyncio.create_task(_close_slow_socket(socket))
 
 
 def _queue_client_message(pid: str, payload: str, kind: str = "event") -> bool:
@@ -580,6 +587,9 @@ def _queue_client_message(pid: str, payload: str, kind: str = "event") -> bool:
         queue.clear()
         queue.extend(retained)
         if len(queue) >= OUTBOUND_QUEUE_LIMIT:
+            if kind in {"state", "inventory"}:
+                # If only critical events remain, drop this replaceable update.
+                return False
             # Critical events are never silently dropped. A client unable to consume
             # them is disconnected instead of retaining unbounded memory.
             _disconnect_slow_client(pid)
