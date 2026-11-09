@@ -151,6 +151,13 @@ app = FastAPI(title="Лес Эхо: Пробуждение")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 players: dict[str, dict[str, Any]] = {}
 clients: dict[str, WebSocket] = {}
+# Per-client bounded outbound queues isolate slow sockets from the simulation loop.
+OUTBOUND_QUEUE_LIMIT = 64
+outbound_queues: dict[str, deque[tuple[str, str]]] = {}
+outbound_events: dict[str, asyncio.Event] = {}
+outbound_tasks: dict[str, asyncio.Task[None]] = {}
+closing_clients: set[str] = set()
+pending_connections = 0
 mobs: list[dict[str, Any]] = []
 nodes: list[dict[str, Any]] = []
 arrows: list[dict[str, Any]] = []
@@ -523,14 +530,72 @@ def snapshot(for_id: str) -> dict[str, Any]:
                                 for field in ground_effects]}
 
 
-async def send_event(event: dict[str, Any]) -> None:
-    payload = json.dumps(event, ensure_ascii=False)
-    for pid, socket in list(clients.items()):
+def _disconnect_slow_client(pid: str) -> None:
+    if pid in closing_clients:
+        return
+    closing_clients.add(pid)
+    writer = outbound_tasks.get(pid)
+    if writer and not writer.done():
+        writer.cancel()
+    socket = clients.get(pid)
+    if socket:
+        asyncio.create_task(socket.close(code=1013, reason="SLOW_CONSUMER"))
+
+
+def _queue_client_message(pid: str, payload: str, kind: str = "event") -> bool:
+    queue = outbound_queues.get(pid)
+    wakeup = outbound_events.get(pid)
+    if queue is None or wakeup is None or pid in closing_clients:
+        return False
+
+    # State-like messages are replaceable: keep only the newest pending copy.
+    if kind in {"state", "inventory"}:
+        retained = [item for item in queue if item[0] != kind]
+        if len(retained) != len(queue):
+            queue.clear()
+            queue.extend(retained)
+
+    if len(queue) >= OUTBOUND_QUEUE_LIMIT:
+        # Under pressure, discard obsolete state before considering a disconnect.
+        retained = [item for item in queue if item[0] not in {"state", "inventory"}]
+        queue.clear()
+        queue.extend(retained)
+        if len(queue) >= OUTBOUND_QUEUE_LIMIT:
+            # Critical events are never silently dropped. A client unable to consume
+            # them is disconnected instead of retaining unbounded memory.
+            _disconnect_slow_client(pid)
+            return False
+
+    queue.append((kind, payload))
+    wakeup.set()
+    return True
+
+
+async def _websocket_writer(pid: str, socket: WebSocket) -> None:
+    queue = outbound_queues[pid]
+    wakeup = outbound_events[pid]
+    try:
+        while True:
+            await wakeup.wait()
+            while queue:
+                _kind, payload = queue.popleft()
+                await socket.send_text(payload)
+            wakeup.clear()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
         try:
-            await socket.send_text(payload)
+            await socket.close(code=1011, reason="SEND_FAILED")
         except Exception:
-            clients.pop(pid, None)
-            players.pop(pid, None)
+            pass
+
+
+async def send_event(event: dict[str, Any]) -> None:
+    # Serialize once, then enqueue; a slow client's network write no longer delays
+    # delivery to other clients or the 30 TPS simulation.
+    payload = json.dumps(event, ensure_ascii=False)
+    for pid in list(clients):
+        _queue_client_message(pid, payload, "event")
 
 
 async def tell(pid: str, text: str) -> None:
@@ -2793,19 +2858,27 @@ async def startup() -> None:
 @app.on_event("shutdown")
 async def shutdown() -> None:
     task = getattr(app.state, "tick_task", None)
-    if task: task.cancel()
+    if task:
+        task.cancel()
+    writers = list(outbound_tasks.values())
+    for writer in writers:
+        writer.cancel()
+    if writers:
+        await asyncio.gather(*writers, return_exceptions=True)
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
+    global pending_connections
     account = await db_call(_account_for_token, websocket.cookies.get("echo_session"))
     if not account:
         await websocket.close(code=1008, reason="AUTH_REQUIRED")
         return
     await websocket.accept()
-    if len(players) >= MAX_PLAYERS:
+    if len(players) + pending_connections >= MAX_PLAYERS:
         await websocket.send_text(json.dumps({"type": "error", "message": "Мир полон. Максимум 8 следопытов."}, ensure_ascii=False))
         await websocket.close(code=1008); return
+    pending_connections += 1
     pid = uuid.uuid4().hex[:8]
     proto = 2 if websocket.query_params.get("v") == "2" else 1
     name = safe_name(account["username"])
@@ -2826,7 +2899,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
          "inventory": {"wood": 0, "herb": 0, "ore": 0, "hide": 0, "slime": 0, "crystal": 0, "shard": 0, "potion": 2, "arrows": 0},
          "quest_stage": 0, "quest_active": False, "quest_kills": {}, "quest_gather": {},
          "gathering": None, "last_chat": 0.0}
-    saved = await db_call(load_character, name)
+    try:
+        saved = await db_call(load_character, name)
+    finally:
+        pending_connections -= 1
     if not saved and proto == 1:
         p["weapon"], p["weapons"] = "sword", ["sword", "axe", "bow"]
         p["inventory"]["arrows"] = 18
@@ -2885,7 +2961,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         p["market_starter_grant"] = True
     p["quest_stage"] = max(0, min(len(QUESTS), int(p["quest_stage"])))
     update_derived(p)
-    players[pid] = p; clients[pid] = websocket
+    players[pid] = p
+    clients[pid] = websocket
+    outbound_queues[pid] = deque()
+    outbound_events[pid] = asyncio.Event()
+    outbound_tasks[pid] = asyncio.create_task(_websocket_writer(pid, websocket))
     if proto == 2:
         # keep the previously equipped weapon selected when it already sits on the hotbar
         sync_slots(p)
@@ -2893,9 +2973,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         if equipped in p["slots"][:9]:
             p["sel"] = p["slots"].index(equipped)
         apply_selection(p)
-        await websocket.send_text(json.dumps(init_message(pid), ensure_ascii=False, separators=(",", ":")))
+        _queue_client_message(
+            pid, json.dumps(init_message(pid), ensure_ascii=False, separators=(",", ":")), "event"
+        )
     else:
-        await websocket.send_text(json.dumps(snapshot(pid), ensure_ascii=False))
+        _queue_client_message(pid, json.dumps(snapshot(pid), ensure_ascii=False), "state")
     if proto == 1 and p["level"] >= CLASS_MIN_LEVEL and not p["class"]:
         await send_event({"type": "class_offer", "target": pid, "level": p["level"],
                           "classes": CLASSES})
@@ -2915,7 +2997,15 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await save_character(players[pid])
             except sqlite3.Error:
                 pass
-        clients.pop(pid, None); players.pop(pid, None)
+        clients.pop(pid, None)
+        players.pop(pid, None)
+        writer = outbound_tasks.pop(pid, None)
+        if writer and not writer.done():
+            writer.cancel()
+            await asyncio.gather(writer, return_exceptions=True)
+        outbound_queues.pop(pid, None)
+        outbound_events.pop(pid, None)
+        closing_clients.discard(pid)
         await send_event({"type": "notice", "text": f"{name} покинул(а) мир."})
 
 
