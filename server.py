@@ -2562,6 +2562,16 @@ async def save_character(p: dict[str, Any]) -> None:
     await db_call(_write_character_save, p["name"].casefold(), data)
 
 
+async def autosave_players() -> None:
+    results = await asyncio.gather(
+        *(save_character(saved_player) for saved_player in list(players.values())),
+        return_exceptions=True,
+    )
+    failures = sum(isinstance(result, BaseException) for result in results)
+    if failures:
+        PERF_LOGGER.warning("echo autosave: %d player save(s) failed", failures)
+
+
 async def push_state(pid: str, ws: WebSocket, now: float) -> None:
     p = players.get(pid)
     if not p:
@@ -2587,6 +2597,7 @@ async def push_state(pid: str, ws: WebSocket, now: float) -> None:
 async def world_tick() -> None:
     last_saved = time.monotonic()
     last_tick = last_saved
+    autosave_task: asyncio.Task[None] | None = None
     last_perf_report = last_saved
     next_state_send = last_saved + STATE_SEND_INTERVAL
     tick_work_samples: deque[float] = deque(maxlen=PERF_SAMPLE_LIMIT)
@@ -2841,10 +2852,8 @@ async def world_tick() -> None:
                 arrows.remove(arrow)
         separate_mobs()
         if now - last_saved >= 10:
-            await asyncio.gather(
-                *(save_character(saved_player) for saved_player in list(players.values())),
-                return_exceptions=True,
-            )
+            if autosave_task is None or autosave_task.done():
+                autosave_task = asyncio.create_task(autosave_players())
             last_saved = now
         if clients:
             connected = list(clients.items())
