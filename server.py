@@ -12,6 +12,7 @@ import sqlite3
 import time
 import uuid
 import copy
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -2099,13 +2100,8 @@ def inv_payload(p: dict[str, Any]) -> dict[str, Any]:
 
 
 async def send_one(pid: str, event: dict[str, Any]) -> None:
-    socket = clients.get(pid)
-    if not socket:
-        return
-    try:
-        await socket.send_text(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
-    except Exception:
-        pass
+    payload = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+    _queue_client_message(pid, payload, "event")
 
 
 async def craft2(p: dict[str, Any], msg: dict[str, Any]) -> None:
