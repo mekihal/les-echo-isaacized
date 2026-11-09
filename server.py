@@ -2702,12 +2702,29 @@ async def world_tick() -> None:
                 except sqlite3.Error:
                     pass
             last_saved = now
-        if clients and now >= next_state_send:
-            # Preserve the 20 Hz schedule without sending catch-up bursts after a slow tick.
-            next_state_send += STATE_SEND_INTERVAL
-            if next_state_send <= now:
-                next_state_send = now + STATE_SEND_INTERVAL
-            await asyncio.gather(*[push_state(pid, ws, now) for pid, ws in list(clients.items())], return_exceptions=True)
+        if clients:
+            connected = list(clients.items())
+            legacy_clients = [(pid, ws) for pid, ws in connected
+                              if players.get(pid, {}).get("proto") != 2]
+            v2_clients = [(pid, ws) for pid, ws in connected
+                          if players.get(pid, {}).get("proto") == 2]
+            # Keep the legacy client on the original 30 Hz full-state cadence.
+            if legacy_clients:
+                await asyncio.gather(
+                    *[push_state(pid, ws, now) for pid, ws in legacy_clients],
+                    return_exceptions=True,
+                )
+            # The v2 client interpolates snapshots, so its network rate can be lower
+            # than the 30 TPS world simulation without changing combat/physics timing.
+            if v2_clients and now >= next_state_send:
+                # Preserve the 20 Hz schedule without sending catch-up bursts after a slow tick.
+                next_state_send += STATE_SEND_INTERVAL
+                if next_state_send <= now:
+                    next_state_send = now + STATE_SEND_INTERVAL
+                await asyncio.gather(
+                    *[push_state(pid, ws, now) for pid, ws in v2_clients],
+                    return_exceptions=True,
+                )
         await asyncio.sleep(max(0.0, TICK - (time.monotonic() - now)))
 
 
