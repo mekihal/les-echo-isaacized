@@ -23,6 +23,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "echo_saves.sqlite3"
 WORLD_W, WORLD_H = 12600, 7200
 TICK = 1 / 30
+# Keep world simulation at 30 TPS while reducing snapshot serialization/network work.
+STATE_SEND_HZ = 20.0
+STATE_SEND_INTERVAL = 1.0 / STATE_SEND_HZ
 MAX_PLAYERS = 8
 
 ZONES = [
@@ -2448,6 +2451,7 @@ async def push_state(pid: str, ws: WebSocket, now: float) -> None:
 async def world_tick() -> None:
     last_saved = time.monotonic()
     last_tick = last_saved
+    next_state_send = last_saved + STATE_SEND_INTERVAL
     while True:
         now = time.monotonic()
         dt = min(.1, max(.001, now - last_tick))
@@ -2698,7 +2702,11 @@ async def world_tick() -> None:
                 except sqlite3.Error:
                     pass
             last_saved = now
-        if clients:
+        if clients and now >= next_state_send:
+            # Preserve the 20 Hz schedule without sending catch-up bursts after a slow tick.
+            next_state_send += STATE_SEND_INTERVAL
+            if next_state_send <= now:
+                next_state_send = now + STATE_SEND_INTERVAL
             await asyncio.gather(*[push_state(pid, ws, now) for pid, ws in list(clients.items())], return_exceptions=True)
         await asyncio.sleep(max(0.0, TICK - (time.monotonic() - now)))
 
