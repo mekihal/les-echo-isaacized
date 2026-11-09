@@ -11,6 +11,8 @@ import random
 import sqlite3
 import time
 import uuid
+import copy
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +29,21 @@ TICK = 1 / 30
 STATE_SEND_HZ = 20.0
 STATE_SEND_INTERVAL = 1.0 / STATE_SEND_HZ
 MAX_PLAYERS = 8
+
+# SQLite work is serialized on one worker thread so it never blocks the asyncio loop.
+DB_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="echo-db")
+PASSWORD_HASH_SEMAPHORE = asyncio.Semaphore(2)
+
+
+async def db_call(function: Any, *args: Any) -> Any:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(DB_EXECUTOR, function, *args)
+
+
+async def password_hash_async(password: str, salt: bytes) -> bytes:
+    # PBKDF2 is intentionally kept off the event loop and bounded under login bursts.
+    async with PASSWORD_HASH_SEMAPHORE:
+        return await asyncio.to_thread(_password_hash, password, salt)
 
 ZONES = [
     {"id": "camp", "name": "Лагерь Следопытов", "x0": 0, "x1": 1400, "level": "Безопасная зона", "danger": 0},
@@ -361,7 +378,7 @@ async def legacy() -> FileResponse:
 
 @app.get("/api/auth/me")
 async def auth_me(request: Request) -> dict[str, Any]:
-    account = _account_for_token(request.cookies.get("echo_session"))
+    account = await db_call(_account_for_token, request.cookies.get("echo_session"))
     return {"authenticated": bool(account), "username": account["username"] if account else None}
 
 
@@ -373,17 +390,13 @@ async def auth_register(request: Request, response: Response) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Не удалось прочитать форму.")
     username, username_key, password = _credentials(payload)
     salt = secrets.token_bytes(16)
-    digest = _password_hash(password, salt)
+    digest = await password_hash_async(password, salt)
     try:
-        with sqlite3.connect(DB_PATH) as connection:
-            connection.execute(
-                "INSERT INTO user_accounts(username_key, username, salt, password_hash, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (username_key, username, salt.hex(), digest.hex(), int(time.time()))
-            )
+        await db_call(_create_account, username_key, username, salt.hex(), digest.hex(), int(time.time()))
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=409, detail="Это имя уже занято. Выберите другое или войдите.")
-    _issue_session(username_key, request, response)
+    token = await db_call(_issue_session, username_key)
+    _set_session_cookie(token, request, response)
     return {"ok": True, "username": username}
 
 
@@ -400,19 +413,17 @@ async def auth_login(request: Request, response: Response) -> dict[str, Any]:
     if not username or not isinstance(password, str) or len(password) > 128:
         raise HTTPException(status_code=401, detail="Неверное имя пользователя или пароль.")
     username_key = username.casefold()
-    with sqlite3.connect(DB_PATH) as connection:
-        row = connection.execute(
-            "SELECT salt, password_hash, username FROM user_accounts WHERE username_key=?",
-            (username_key,)
-        ).fetchone()
+    row = await db_call(_login_record, username_key)
     if not row:
         # Match the password-hash cost to reduce username enumeration by timing.
-        _password_hash(password or "invalid", bytes(16))
+        await password_hash_async(password or "invalid", bytes(16))
         raise HTTPException(status_code=401, detail="Неверное имя пользователя или пароль.")
     salt = bytes.fromhex(row[0])
-    if not hmac.compare_digest(_password_hash(password, salt).hex(), row[1]):
+    digest = await password_hash_async(password, salt)
+    if not hmac.compare_digest(digest.hex(), row[1]):
         raise HTTPException(status_code=401, detail="Неверное имя пользователя или пароль.")
-    _issue_session(username_key, request, response)
+    token = await db_call(_issue_session, username_key)
+    _set_session_cookie(token, request, response)
     return {"ok": True, "username": row[2]}
 
 
@@ -421,8 +432,7 @@ async def auth_logout(request: Request, response: Response) -> dict[str, bool]:
     token = request.cookies.get("echo_session")
     if token:
         token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        with sqlite3.connect(DB_PATH) as connection:
-            connection.execute("DELETE FROM auth_sessions WHERE token_hash=?", (token_hash,))
+        await db_call(_revoke_session, token_hash)
     response.delete_cookie("echo_session", path="/", httponly=True, samesite="strict",
                            secure=request.url.scheme == "https")
     return {"ok": True}
@@ -529,7 +539,7 @@ async def tell(pid: str, text: str) -> None:
 
 async def sync_station_state(p: dict[str, Any]) -> None:
     """Persist station transactions and immediately refresh the player's client."""
-    save_character(p)
+    await save_character(p)
     pid = str(p.get("id", ""))
     await send_event({"type": "player_update", "target": pid,
                       "player": player_row(pid, p, time.monotonic())})
@@ -1401,7 +1411,7 @@ async def choose_class(p: dict[str, Any], msg: dict[str, Any]) -> None:
     p["stats_revision"] = int(p.get("stats_revision", 0)) + 1
     update_derived(p, heal=True)
     try:
-        save_character(p)
+        await save_character(p)
     except sqlite3.Error:
         pass
     await send_event({"type": "class_selected", "target": p["id"], "class": chosen,
@@ -1560,7 +1570,7 @@ async def use_ability(p: dict[str, Any], now: float, ability_id: str, aim_x: flo
     award_mastery(p, tree, 8 + int(spec["mastery"]) * 2)
     if hits:
         try:
-            save_character(p)
+            await save_character(p)
         except sqlite3.Error:
             pass
 
@@ -2270,7 +2280,7 @@ async def handle_message(pid: str, p: dict[str, Any], msg: dict[str, Any], now: 
             upgraded = True
         if upgraded:
             p["stats_revision"] = int(p.get("stats_revision", 0)) + 1
-            try: save_character(p)
+            try: await save_character(p)
             except sqlite3.Error: pass
             await send_event(stats_updated_event(pid, p))
     elif kind == "dodge":
@@ -2334,8 +2344,18 @@ PERSIST_FIELDS = (
 )
 
 
+def _connect_db() -> sqlite3.Connection:
+    connection = sqlite3.connect(DB_PATH, timeout=5.0)
+    connection.execute("PRAGMA busy_timeout = 5000")
+    connection.execute("PRAGMA synchronous = NORMAL")
+    return connection
+
+
 def init_database() -> None:
-    with sqlite3.connect(DB_PATH) as connection:
+    with _connect_db() as connection:
+        # WAL improves read/write coexistence and NORMAL avoids an unnecessary fsync
+        # for every small autosave while retaining SQLite's transactional guarantees.
+        connection.execute("PRAGMA journal_mode = WAL")
         connection.execute(
             "CREATE TABLE IF NOT EXISTS character_saves ("
             "name TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL)"
@@ -2364,7 +2384,7 @@ def _account_for_token(token: str | None) -> dict[str, str] | None:
     if not token or len(token) > 200:
         return None
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    with sqlite3.connect(DB_PATH) as connection:
+    with _connect_db() as connection:
         row = connection.execute(
             "SELECT a.username, a.username_key FROM auth_sessions s "
             "JOIN user_accounts a ON a.username_key=s.username_key "
@@ -2373,15 +2393,44 @@ def _account_for_token(token: str | None) -> dict[str, str] | None:
     return {"username": row[0], "username_key": row[1]} if row else None
 
 
-def _issue_session(username_key: str, request: Request, response: Response) -> None:
+def _create_account(username_key: str, username: str, salt: str,
+                    password_hash: str, created_at: int) -> None:
+    with _connect_db() as connection:
+        connection.execute(
+            "INSERT INTO user_accounts(username_key, username, salt, password_hash, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (username_key, username, salt, password_hash, created_at),
+        )
+
+
+def _login_record(username_key: str) -> tuple[str, str, str] | None:
+    with _connect_db() as connection:
+        return connection.execute(
+            "SELECT salt, password_hash, username FROM user_accounts WHERE username_key=?",
+            (username_key,),
+        ).fetchone()
+
+
+def _issue_session(username_key: str) -> str:
     token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
     expires = int(time.time()) + SESSION_SECONDS
-    with sqlite3.connect(DB_PATH) as connection:
-        connection.execute("INSERT INTO auth_sessions(token_hash, username_key, expires_at) VALUES (?, ?, ?)",
-                           (token_hash, username_key, expires))
+    with _connect_db() as connection:
+        connection.execute(
+            "INSERT INTO auth_sessions(token_hash, username_key, expires_at) VALUES (?, ?, ?)",
+            (token_hash, username_key, expires),
+        )
+    return token
+
+
+def _set_session_cookie(token: str, request: Request, response: Response) -> None:
     response.set_cookie("echo_session", token, max_age=SESSION_SECONDS, httponly=True,
                         secure=request.url.scheme == "https", samesite="strict", path="/")
+
+
+def _revoke_session(token_hash: str) -> None:
+    with _connect_db() as connection:
+        connection.execute("DELETE FROM auth_sessions WHERE token_hash=?", (token_hash,))
 
 
 def _credentials(payload: Any) -> tuple[str, str, str]:
@@ -2400,7 +2449,7 @@ def _credentials(payload: Any) -> tuple[str, str, str]:
 
 def load_character(name: str) -> dict[str, Any]:
     try:
-        with sqlite3.connect(DB_PATH) as connection:
+        with _connect_db() as connection:
             row = connection.execute(
                 "SELECT data FROM character_saves WHERE name = ?", (name.casefold(),)
             ).fetchone()
@@ -2412,22 +2461,26 @@ def load_character(name: str) -> dict[str, Any]:
     return {}
 
 
-def save_character(p: dict[str, Any]) -> None:
-    data = {key: p[key] for key in PERSIST_FIELDS if key in p}
-    # Store cooldowns as remaining seconds: monotonic clocks restart with the process,
-    # while the player's cooldown progress should survive a normal reconnect.
-    now = time.monotonic()
-    data["ability_cooldowns"] = {
-        str(ability_id): round(max(0.0, min(300.0, float(until) - now)), 2)
-        for ability_id, until in (p.get("ability_cooldowns", {}) or {}).items()
-        if str(ability_id) in ABILITY_CATALOG
-    }
-    with sqlite3.connect(DB_PATH) as connection:
+def _write_character_save(name: str, data: dict[str, Any]) -> None:
+    with _connect_db() as connection:
         connection.execute(
             "INSERT INTO character_saves(name, data, updated_at) VALUES (?, ?, ?) "
             "ON CONFLICT(name) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
-            (p["name"].casefold(), json.dumps(data, ensure_ascii=False), int(time.time())),
+            (name, json.dumps(data, ensure_ascii=False), int(time.time())),
         )
+
+
+async def save_character(p: dict[str, Any]) -> None:
+    # Take an isolated snapshot on the event loop. The DB worker must never read a
+    # live player dict because gameplay can mutate it while the write is queued.
+    data = copy.deepcopy({key: p[key] for key in PERSIST_FIELDS if key in p})
+    now = time.monotonic()
+    data["ability_cooldowns"] = {
+        str(ability_id): round(max(0.0, min(300.0, float(until) - now)), 2)
+        for ability_id, until in (data.get("ability_cooldowns", {}) or {}).items()
+        if str(ability_id) in ABILITY_CATALOG
+    }
+    await db_call(_write_character_save, p["name"].casefold(), data)
 
 
 async def push_state(pid: str, ws: WebSocket, now: float) -> None:
@@ -2440,10 +2493,14 @@ async def push_state(pid: str, ws: WebSocket, now: float) -> None:
             sig = inv_signature(p)
             if sig != p.get("_inv_sig"):
                 p["_inv_sig"] = sig
-                await ws.send_text(json.dumps(inv_payload(p), ensure_ascii=False, separators=(",", ":")))
-            await ws.send_text(json.dumps(snapshot2(pid, now), ensure_ascii=False, separators=(",", ":")))
+                _queue_client_message(
+                    pid, json.dumps(inv_payload(p), ensure_ascii=False, separators=(",", ":")), "inventory"
+                )
+            _queue_client_message(
+                pid, json.dumps(snapshot2(pid, now), ensure_ascii=False, separators=(",", ":")), "state"
+            )
         else:
-            await ws.send_text(json.dumps(snapshot(pid), ensure_ascii=False))
+            _queue_client_message(pid, json.dumps(snapshot(pid), ensure_ascii=False), "state")
     except Exception:
         pass
 
@@ -2696,11 +2753,10 @@ async def world_tick() -> None:
                 arrows.remove(arrow)
         separate_mobs()
         if now - last_saved >= 10:
-            for saved_player in players.values():
-                try:
-                    save_character(saved_player)
-                except sqlite3.Error:
-                    pass
+            await asyncio.gather(
+                *(save_character(saved_player) for saved_player in list(players.values())),
+                return_exceptions=True,
+            )
             last_saved = now
         if clients:
             connected = list(clients.items())
@@ -2730,7 +2786,7 @@ async def world_tick() -> None:
 
 @app.on_event("startup")
 async def startup() -> None:
-    init_database()
+    await db_call(init_database)
     app.state.tick_task = asyncio.create_task(world_tick())
 
 
@@ -2742,7 +2798,7 @@ async def shutdown() -> None:
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    account = _account_for_token(websocket.cookies.get("echo_session"))
+    account = await db_call(_account_for_token, websocket.cookies.get("echo_session"))
     if not account:
         await websocket.close(code=1008, reason="AUTH_REQUIRED")
         return
@@ -2770,7 +2826,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
          "inventory": {"wood": 0, "herb": 0, "ore": 0, "hide": 0, "slime": 0, "crystal": 0, "shard": 0, "potion": 2, "arrows": 0},
          "quest_stage": 0, "quest_active": False, "quest_kills": {}, "quest_gather": {},
          "gathering": None, "last_chat": 0.0}
-    saved = load_character(name)
+    saved = await db_call(load_character, name)
     if not saved and proto == 1:
         p["weapon"], p["weapons"] = "sword", ["sword", "axe", "bow"]
         p["inventory"]["arrows"] = 18
@@ -2856,7 +2912,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     finally:
         if pid in players:
             try:
-                save_character(players[pid])
+                await save_character(players[pid])
             except sqlite3.Error:
                 pass
         clients.pop(pid, None); players.pop(pid, None)
