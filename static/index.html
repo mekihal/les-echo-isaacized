@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#14100c">
+<title>Лес Эхо 2.0</title>
+<link rel="stylesheet" href="/static/css/game.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="hurt"></div>
+
+  <div id="status" class="panel">
+    <div id="portrait"><canvas id="portraitCv" width="16" height="16"></canvas><b id="lvl">1</b></div>
+    <div class="bars">
+      <div class="bar hp" title="Здоровье"><i id="hpFill"></i><i id="hpGhost"></i><span id="hpText">100/100</span></div>
+      <div class="bar st" id="stBar" title="Выносливость — расходуется на бег, рывок и удары"><i id="stFill"></i><span id="stText">100</span></div>
+      <div class="bar xp" title="Опыт"><i id="xpFill"></i></div>
+      <div class="row"><span id="gold"><i class="coin"></i><span id="goldN">0</span></span><span id="comboTag" class="hidden">КОМБО</span><span id="exhaust" class="hidden">ЗАПЫХАЛСЯ</span></div>
+    </div>
+  </div>
+
+  <div id="topRight">
+    <div id="zoneName" class="panel">—</div>
+    <div id="mini" class="panel"><canvas id="miniCv"></canvas></div>
+    <div id="quest" class="panel"><b>Поручение</b><div id="questBody">—</div></div>
+  </div>
+
+  <div id="banner"></div>
+  <div id="tutorial" class="panel hidden"></div>
+  <div id="prompt" class="hidden"></div>
+
+  <div id="hotWrap">
+    <div id="itemName"></div>
+    <div id="hotbar"></div>
+  </div>
+
+  <div id="chat">
+    <div id="chatLog"></div>
+    <div id="chatRow"><input id="chatInput" class="hidden" maxlength="160" autocomplete="off" enterkeyhint="send" placeholder="Сообщение…"><button id="chatSend" class="hidden">Отправить</button><button id="chatCancel" class="hidden">Отмена</button></div>
+  </div>
+
+  <div id="legend" class="panel"></div>
+  <div id="perf" class="hidden"></div>
+  <div id="rotateHint" class="hidden panel">Поверни устройство горизонтально — так играть удобнее</div>
+  <div id="conn" class="hidden"></div>
+</div>
+
+<!-- Inventory + crafting (Ё) -->
+<div id="inv" class="overlay hidden">
+  <div class="window panel">
+    <header><h2>Инвентарь и крафт</h2><span class="hint"><kbd>Ё</kbd> или <kbd>Esc</kbd> — закрыть</span><button class="chip closeBtn" data-close="1">Закрыть</button></header>
+    <div class="cols">
+      <section id="equip">
+        <h3>Персонаж</h3>
+        <div id="charCard"><canvas id="charCv" width="27" height="38"></canvas>
+          <div><div id="charName"></div><div id="charLv"></div><div id="charDef"></div></div></div>
+        <div class="eqRow"><span>Броня</span><div class="slot" id="armorSlot" title="Нажми, чтобы снять броню"><img alt=""></div></div>
+        <div class="eqRow"><span>В руках</span><div class="slot" id="handSlot"><img alt=""></div></div>
+        <h3>Развитие <b id="spPts"></b></h3><div id="statsBox"></div>
+      </section>
+      <section id="grid">
+        <h3>Рюкзак</h3>
+        <div id="mainGrid" class="grid"></div>
+        <h3>Быстрая панель <small>1–9</small></h3>
+        <div id="hotGrid" class="grid"></div>
+        <div id="itemActions" class="hidden"></div>
+        <p class="tip">Нажми на предмет, чтобы взять его, и на другой слот, чтобы положить. Использовать или надеть: кнопка «Надеть» / «В руки», ПКМ, двойной клик или долгое нажатие. Shift+ЛКМ: быстро переместить.</p>
+      </section>
+      <section id="craft">
+        <h3>Крафт <small>без верстака</small></h3>
+        <div id="craftTabs"></div>
+        <div id="craftBody"></div>
+        <div id="craftMsg"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div id="help" class="overlay hidden"><div class="window panel narrow"><header><h2>Управление</h2><span class="hint"><kbd>H</kbd> — закрыть</span><button class="chip closeBtn" data-close="1">Закрыть</button></header><div id="helpBody"></div><div id="helpActions"></div></div></div>
+<div id="mapOv" class="overlay hidden"><div class="window panel"><header><h2>Карта мира</h2><span class="hint"><kbd>M</kbd> — закрыть</span><button class="chip closeBtn" data-close="1">Закрыть</button></header><canvas id="bigMap"></canvas></div></div>
+
+<div id="auth" class="overlay">
+  <form id="authForm" class="window panel narrow" autocomplete="on">
+    <h1>ЛЕС ЭХО</h1><p class="sub">пиксельная кооп-RPG · версия 2.0</p>
+    <div class="tabs"><button type="button" data-mode="login" class="on">Вход</button><button type="button" data-mode="register">Регистрация</button></div>
+    <label>Имя героя<input id="authUser" maxlength="18" autocomplete="username" required></label>
+    <label>Пароль<input id="authPass" type="password" autocomplete="current-password" required></label>
+    <label id="authPass2Wrap" class="hidden">Повтор пароля<input id="authPass2" type="password" autocomplete="new-password"></label>
+    <div id="authErr"></div>
+    <button class="big" id="authGo">Войти в лес</button>
+    <p class="sub small">Старая версия клиента: <a href="/legacy">/legacy</a></p>
+  </form>
+</div>
+<div id="held" class="hidden"><img alt=""></div>
+<div id="tip" class="hidden panel"></div>
+<div id="cursor" class="hidden"></div>
+<script type="module" src="/static/js/main.js"></script>
+</body>
+</html>
