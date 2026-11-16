@@ -17,9 +17,10 @@ export class UI {
     this.cb = cb; this.init = null; this.inv = null; this.open = null; this.held = null; this.sel = 0;
     this.craft = { tab: 'weapon', type: 'sword', mat: 'wood', gear: 'hide_vest', item: 'arrows' };
     this.hot = []; this.gridHot = []; this.gridMain = []; this.lastStatus = {}; this.chatTimer = 0; this.skin = null;
+    this.classModalVisible = false; this.classModalDismissed = false; this._skillSig = '';
     this.bindStatic();
   }
-  get anyOpen() { return !!this.open; }
+  get anyOpen() { return !!this.open || this.classModalVisible; }
   bindStatic() {
     document.addEventListener('mousemove', (e) => { const c = $('cursor'); c.style.left = e.clientX + 'px'; c.style.top = e.clientY + 'px'; const hd = $('held'); hd.style.left = e.clientX + 8 + 'px'; hd.style.top = e.clientY + 8 + 'px'; const t = $('tip'); if (!t.classList.contains('hidden')) this.placeTip(e.clientX, e.clientY); });
     document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => this.close()));
@@ -43,7 +44,7 @@ export class UI {
   buildLegend() {
     const rows = [['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>', 'движение'], ['<kbd>Shift</kbd>', 'бег (тратит стамину)'], ['<kbd>Пробел</kbd>', 'рывок-уклонение'],
       ['<kbd>ЛКМ</kbd>', 'удар · держи = замах'], ['<kbd>ПКМ</kbd>', 'использовать предмет'], ['<kbd>E</kbd>', 'собрать ресурс'], ['<kbd>F</kbd>', 'говорить с Хранителем'],
-      ['<kbd>Q</kbd>', 'выпить настойку'], ['<kbd>Ё</kbd>', 'инвентарь и крафт'], ['<kbd>1</kbd>–<kbd>9</kbd>', 'слот · колесо мыши'], ['<kbd>Z</kbd>', 'держать: дальний обзор'],
+      ['<kbd>Q</kbd>', 'выпить настойку'], ['<kbd>Ё</kbd>', 'инвентарь и крафт'], ['<kbd>1</kbd>–<kbd>9</kbd>', 'слот · колесо мыши'], ['<kbd>R</kbd> / <kbd>T</kbd> / <kbd>C</kbd> / <kbd>V</kbd> / <kbd>X</kbd>', 'способности класса'], ['<kbd>Z</kbd>', 'держать: дальний обзор'],
       ['<kbd>M</kbd>', 'карта'], ['<kbd>Enter</kbd>', 'чат'], ['<kbd>H</kbd>', 'все подсказки']];
     $('legend').innerHTML = rows.map(([k, t]) => `<div>${k}<span>${t}</span></div>`).join('');
   }
@@ -222,7 +223,62 @@ export class UI {
       $('stFill').style.width = clamp(st / row.ms * 100, 0, 100) + '%'; $('stText').textContent = stv; const b = $('stBar'); b.classList.toggle('low', st / row.ms < .25); b.classList.toggle('ex', !!row.ex); $('exhaust').classList.toggle('hidden', !row.ex); L.st = stv; L.ms = row.ms; L.ex = row.ex;
     }
     if (L.xp !== row.xp || L.xpn !== row.xpn) { $('xpFill').style.width = clamp(row.xp / row.xpn * 100, 0, 100) + '%'; L.xp = row.xp; L.xpn = row.xpn; }
+    const mp = Math.max(0, Number(row.mp) || 0), mmp = Math.max(1, Number(row.mmp) || 60);
+    if (L.mp !== mp || L.mmp !== mmp) {
+      const manaEl = $('h-mana'), manaTxt = $('h-mana-t');
+      if (manaEl) manaEl.style.width = `${clamp(mp / mmp * 100, 0, 100)}%`;
+      if (manaTxt) manaTxt.textContent = `${mp}/${mmp}`;
+      L.mp = mp; L.mmp = mmp;
+    }
+    this.renderSkillbar(row);
+    if (row.co && !this.classModalDismissed && !this.classModalVisible) this.showClassModal(this.init?.classes);
     const cb = row.cb && row.at !== undefined ? row.cb : 0; if (L.cb !== cb) { L.cb = cb; }
+  }
+  renderSkillbar(me) {
+    const bar = $('skillbar');
+    if (!bar) return;
+    const skills = Object.values(me?.ab || {}).filter((a) => a.tree === me.cl);
+    const sig = `${me?.cl || ''}|` + skills.map((a) => [a.id, a.unlocked, a.remaining, a.key].join(':')).join('|');
+    if (sig === this._skillSig) return;
+    this._skillSig = sig;
+    if (!skills.length) { bar.innerHTML = ''; bar.classList.add('hidden'); return; }
+    bar.innerHTML = skills.map((a) => {
+      const key = esc(String(a.key || '').replace(/^Key/, ''));
+      const cd = Number(a.remaining) > 0 ? `<span class="sk-cd">${Number(a.remaining).toFixed(1)}</span>` : '';
+      const lock = a.unlocked ? '' : ' locked';
+      return `<div class="skill-slot${lock}" title="${esc(a.name)}: ${esc(a.desc)}">
+        <span class="sk-key">${key}</span><span class="sk-ico">${esc(a.icon || '✦')}</span>${cd}
+      </div>`;
+    }).join('');
+    bar.classList.remove('hidden');
+  }
+  showClassModal(classes) {
+    const modal = $('class-modal'), box = $('class-choices');
+    if (!modal || !box || !classes || this.classModalDismissed) return;
+    this.classModalVisible = true;
+    box.innerHTML = Object.entries(classes).map(([id, c]) => `
+      <button type="button" class="class-choice" data-class="${esc(id)}">
+        <strong>${esc(c.name)}</strong>
+        <span class="class-title">${esc(c.title || c.style || '')}</span>
+        <span class="class-desc">${esc(c.description || '')}</span>
+      </button>
+    `).join('');
+    box.querySelectorAll('[data-class]').forEach((el) => {
+      el.onclick = () => {
+        box.querySelectorAll('[data-class]').forEach((choice) => { choice.disabled = true; });
+        el.classList.add('selected');
+        this.cb.chooseClass?.(el.dataset.class);
+      };
+    });
+    modal.classList.remove('hidden');
+    this.cb.menuChanged?.('class');
+  }
+  hideClassModal() {
+    const modal = $('class-modal');
+    if (modal) modal.classList.add('hidden');
+    if (this.classModalVisible) this.cb.menuChanged?.(null);
+    this.classModalVisible = false;
+    this.classModalDismissed = true;
   }
   combo(n) { const t = $('comboTag'); t.classList.toggle('hidden', n < 1); t.textContent = n >= 2 ? 'ТЯЖЁЛЫЙ УДАР!' : 'КОМБО ×' + (n + 1); }
   hurt() { const h = $('hurt'); h.classList.add('on'); clearTimeout(this._ht); this._ht = setTimeout(() => h.classList.remove('on'), 90); }

@@ -71,7 +71,8 @@ function start() {
   ui = new UI({
     select: (i) => net.send({ type: 'select_slot', slot: i }), use: (i) => net.send({ type: 'use_slot', slot: i }), move: (a, b) => net.send({ type: 'inv_move', a, b }),
     craft: (id) => net.send({ type: 'craft2', id }), unequip: () => net.send({ type: 'unequip_gear' }), upgrade: (stat) => net.send({ type: 'upgrade', stat }),
-    chat: (text) => net.send({ type: 'chat', text }), name: () => myName, menuChanged: (n) => { if (n === 'inv') openedInv = true; if (n) releaseInputs(); touch?.hide(!!n); },
+    chat: (text) => net.send({ type: 'chat', text }), name: () => myName,
+    chooseClass: (className) => net.send({ type: 'choose_class', class: className }), menuChanged: (n) => { if (n === 'inv') openedInv = true; if (n) releaseInputs(); touch?.hide(!!n); },
   });
   net = new Net({
     onInit: (m) => { init = m; world = new World(m); ui.setInit(m); $('auth').classList.add('hidden'); document.body.classList.remove('menu'); me.id = m.you; miniBase = world.mapBase(252, 144); ui.conn(null); },
@@ -124,7 +125,48 @@ function onEvent(m) {
     case 'chat': return ui.addChat(m.text, '', m.name);
     case 'notice': { ui.addChat(m.text, 'sys'); if (/уровня/.test(m.text)) { sfx.level(); fx.burst(me.x, me.y, ['#ffe28a', '#fff6c0', '#ffffff'], 40, 220, 160, 1.1); fx.ring(me.x, me.y, 70, '#ffe28a', .6); } else if (/Найдено оружие|Добыча|добыча/.test(m.text)) sfx.pick(); return; }
     case 'error': return ui.addChat(m.text || m.message || 'Ошибка', 'bad');
-    case 'spell_fx': case 'ability_impact': case 'ground_pulse': return;
+    case 'class_offer':
+      ui.showClassModal(m.classes || init?.classes);
+      return;
+    case 'class_selected':
+      ui.hideClassModal();
+      ui.addChat(`Выбран класс: ${m.class_name || m.class || 'неизвестно'}.`, 'sys');
+      return;
+    case 'spell_fx': {
+      const colors = Array.isArray(m.palette?.colors) ? m.palette.colors : ['#91d8df', '#ffffff'];
+      fx.ring(m.x, m.y, m.radius || 80, colors[0] || '#91d8df');
+      fx.burst(m.x, m.y, colors, 14, 180, 100, .45);
+      return;
+    }
+    case 'ability_cast': {
+      const color = m.ability === 'roar' ? '#ff7b54' : m.ability === 'iron_guard' ? '#73d5ff' : '#f2d17d';
+      if (m.ability === 'lunge') {
+        const dx = m.target_x - m.from_x, dy = m.target_y - m.from_y;
+        const distance = Math.hypot(dx, dy), steps = Math.min(8, Math.max(2, Math.ceil(distance / 34)));
+        for (let i = 1; i <= steps; i++) {
+          const t = i / steps;
+          fx.burst(m.from_x + dx * t, m.from_y + dy * t, ['#f2d17d', '#fff4d0'], 3, 110, 35, .25);
+        }
+      } else if (m.ability === 'whirlwind') {
+        fx.ring(m.x, m.y, m.radius || 112, color);
+        fx.burst(m.x, m.y, [color, '#fff4d0'], 18, 190, 70, .35);
+      } else if (m.ability === 'roar' || m.ability === 'iron_guard') {
+        fx.ring(m.x, m.y, 48, color);
+        fx.burst(m.x, m.y, [color, '#ffffff'], 12, 125, 45, .3);
+      } else {
+        fx.burst(m.target_x, m.target_y, [color, '#ffffff'], 10, 170, 55, .35);
+      }
+      return;
+    }
+    case 'ability_impact': {
+      const color = m.element === 'fire' ? '#ff6b3d' : m.element === 'ice' ? '#70e1ff' : '#d9f2b4';
+      fx.burst(m.x, m.y, [color, '#ffffff'], 10, 165, 65, .35);
+      return;
+    }
+    case 'ground_pulse':
+      fx.ring(m.x, m.y, m.radius || 110, '#a8d982');
+      fx.burst(m.x, m.y, ['#a8d982', '#f2e8b0'], 12, 150, 45, .35);
+      return;
   }
 }
 function onHit(m) {
@@ -201,7 +243,7 @@ function input() {
   return { x, y, sprint };
 }
 addEventListener('keydown', (e) => {
-  if (!ui) return; if (ui.typing) return;
+  if (!ui) return; if (ui.typing || ui.classModalVisible) return;
   if (e.code === 'Backquote') { e.preventDefault(); if (!ui.open || ui.open === 'inv') ui.toggle('inv'); return; }
   if (e.code === 'Escape') { if (ui.open) ui.close(); return; }
   if (e.code === 'KeyH') { if (!ui.open || ui.open === 'help') ui.toggle('help'); return; }
@@ -209,8 +251,19 @@ addEventListener('keydown', (e) => {
   if (e.code === 'F3') { e.preventDefault(); perf.show = !perf.show; if (!perf.show) ui.perf(null); return; }
   if (e.code === 'KeyN') { const muted = sfx.toggle(); music.setMuted(muted); ui.addChat(muted ? 'Звук выключен.' : 'Звук включён.', 'sys'); return; }
   if (e.code === 'Enter') { e.preventDefault(); ui.openChat(); releaseInputs(); return; }
-  if (ui.open) return;
+  if (ui.anyOpen) return;
   if (e.repeat) { if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault(); return; }
+  const ability = row?.cl && Object.values(row.ab || {}).find((a) => a.tree === row.cl && a.key === e.code);
+  if (ability) {
+    e.preventDefault();
+    if (!ability.unlocked) ui.addChat(`Способность «${ability.name}» ещё не открыта.`, 'sys');
+    else if (canAct() && ability.remaining <= 0) {
+      const targetX = touch?.enabled && !touch.recentMouse() ? net.me.x + aim.x * 180 : mw.x;
+      const targetY = touch?.enabled && !touch.recentMouse() ? net.me.y + aim.y * 180 : mw.y;
+      net.send({ type: 'ability', ability: ability.id, aim_x: aim.x, aim_y: aim.y, target_x: targetX, target_y: targetY });
+    }
+    return;
+  }
   if (e.code === 'Space') { e.preventDefault(); tryDash(); return; }
   if (e.code === 'KeyE') { net.send({ type: 'gather_start' }); return; }
   if (e.code === 'KeyF') { net.send({ type: 'interact' }); return; }

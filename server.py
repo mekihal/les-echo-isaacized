@@ -351,11 +351,6 @@ async def index() -> FileResponse:
     return FileResponse(BASE_DIR / "static" / "index.html", headers={"Cache-Control": "no-cache"})
 
 
-@app.get("/legacy")
-async def legacy() -> FileResponse:
-    return FileResponse(BASE_DIR / "static" / "legacy.html")
-
-
 @app.get("/api/auth/me")
 async def auth_me(request: Request) -> dict[str, Any]:
     account = _account_for_token(request.cookies.get("echo_session"))
@@ -430,85 +425,6 @@ def quest_data(p: dict[str, Any]) -> dict[str, Any]:
             "kills": dict(p["quest_kills"]), "gather": dict(p["quest_gather"])}
 
 
-def player_row(pid: str, p: dict[str, Any], now: float) -> dict[str, Any]:
-    action = None
-    if p["attack"]:
-        a = p["attack"]
-        spec = WEAPONS[a["weapon"]]
-        action = {"weapon": a["weapon"], "kind": spec["kind"],
-                  "charge": min(1.0, max(0.0, (now - a["started"]) / spec["charge"])),
-                  "aim_x": a["aim_x"], "aim_y": a["aim_y"]}
-    zone = zone_for_x(p["x"])
-    tree = action_tree(p)
-    chosen_class = p.get("class") if p.get("class") in CLASSES else None
-    return {"id": pid, "name": p["name"], "x": round(p["x"], 1), "y": round(p["y"], 1),
-            "class": chosen_class, "class_name": CLASSES[chosen_class]["name"] if chosen_class else "Путник",
-            "class_offer": p["level"] >= CLASS_MIN_LEVEL and not chosen_class,
-            "class_compatible": class_compatible(p, tree), "action_tree": tree,
-            "weapon_kind": weapon_kind(p), "mastery": mastery_view(p),
-            "abilities": abilities_view(p, now), "effects": player_effects(p, now),
-            "face_x": p["face_x"], "face_y": p["face_y"], "hp": p["hp"], "max_hp": p["max_hp"],
-            "stamina": round(p["stamina"], 1), "max_stamina": p["max_stamina"],
-            "mana": round(p.get("mana", 0), 1), "max_mana": p.get("max_mana", 0), "xp": p["xp"],
-            "level": p["level"], "skill_points": p["skill_points"], "stats": dict(p["stats"]),
-            "stat_values": {key: int(p["stats"].get(key, 1)) for key in stat_names},
-            "upgrades_view": upgrades_view(p),
-            "mana_growth": mana_growth_bonus(p), "mana_growth_next": mana_growth_next(p),
-            "stats_revision": int(p.get("stats_revision", 0)),
-            "gold": p["gold"], "kills": p["kills"], "quest": quest_data(p),
-            "respawning": p["respawn_at"] > now, "weapons": list(p["weapons"]), "weapon": p["weapon"],
-            "gear": p["gear"], "gear_inventory": list(p["gear_inventory"]),
-            "enchantments": p.get("enchantments", {"weapon": {}, "gear": {}}),
-            "mana": round(p.get("mana", 0), 1), "max_mana": p.get("max_mana", 0),
-            "mana_regen_level": int(p.get("mana_regen_level", 0)),
-            "magic_damage_level": int(p.get("magic_damage_level", 0)),
-            "magic_damage_bonus": int(p.get("magic_damage_level", 0)) * 8,
-            "shop_catalog": SHOP_CATALOG, "sell_prices": SELL_PRICES, "enchant_catalog": ENCHANT_CATALOG,
-            "spell_catalog": all_spells(p), "spells_unlocked": [sid for sid in all_spells(p) if spell_unlocked(p, sid)],
-            "spell_uses": dict(p.get("spell_uses", {})),
-            "spell_levels": {sid: spell_mastery_level(p, sid) for sid in all_spells(p)},
-            "custom_spells": [{**spell, "id": spell_id, "spell_id": spell_id}
-                              for spell_id, spell in p.get("custom_spells", {}).items()
-                              if isinstance(spell, dict)],
-            "spell_cooldowns": {sid: {"remaining": max(0.0, round(until - now, 2)), "total": spell_cooldown_seconds(p, sid)}
-                                for sid, until in p.get("spell_cooldowns", {}).items()},
-            "magic_mana_spent": int(p.get("magic_mana_spent", 0)),
-            "upgrades": p.get("upgrades", {"weapon": {}, "gear": {}}),
-            "weapon_sell_prices": {key: weapon_sell_price(key) for key in p["weapons"]},
-            "gear_sell_prices": {key: gear_sell_price(key) for key in [p["gear"], *p["gear_inventory"]]},
-            "gear_catalog": GEAR,
-            "weapon_catalog": {key: {"name": value["name"], "rarity": value.get("rarity", "common"),
-                                     "damage": value["damage"], "bonus": value.get("bonus", 0),
-                                     "kind": value["kind"], "charge": value.get("charge", .7), "range": value.get("range", 420),
-                                     "arc": value.get("arc", .28), "spell_power": value.get("spell_power", 0),
-                                     "upgrade": item_upgrade_level(p, "weapon", key)}
-                               for key, value in WEAPONS.items()},
-            "inventory": dict(p["inventory"]), "attack": action,
-            "gathering": p["gathering"] is not None, "gather_progress": (p["gathering"]["progress"] / 1.15 if p["gathering"] else 0), "zone": zone["id"],
-            "dodge_ready": now >= p["dodge_at"]}
-
-
-def snapshot(for_id: str) -> dict[str, Any]:
-    now = time.monotonic()
-    return {"type": "state", "you": for_id, "world": {"w": WORLD_W, "h": WORLD_H},
-            "zones": ZONES, "elements": ELEMENT_FX, "power_sites": POWER_SITES,
-            "classes": CLASSES,
-            "players": [player_row(pid, p, now) for pid, p in players.items()],
-            "mobs": [{**{k: mob[k] for k in ("id", "kind", "level", "x", "y", "hp", "max_hp", "boss")},
-                      "telegraphing": mob["telegraph_until"] > now,
-                      "burning": float(mob.get("burn_until", 0) or 0) > now,
-                      "slowed": float(mob.get("slow_until", 0) or 0) > now}
-                     for mob in mobs if mob["hp"] > 0],
-            "nodes": [{k: n[k] for k in ("id", "kind", "x", "y", "active", "zone")} for n in nodes],
-            "arrows": [{k: a[k] for k in ("x", "y", "vx", "vy", "life", "kind", "radius", "element", "spell_id", "spell_kind", "spell_rarity", "spell_mastery", "spell_variant", "spell_palette", "max_distance", "travelled") if k in a} for a in arrows],
-            "thorn_fields": [{k: field[k] for k in ("x", "y", "radius", "until", "owner")} for field in thorn_fields],
-            "ground_effects": [{"id": field["id"], "kind": field["kind"], "x": round(field["x"], 1),
-                                 "y": round(field["y"], 1), "radius": field["radius"],
-                                 "owner": field.get("owner"), "remaining": round(max(0.0, field["until"] - now), 2),
-                                 "telegraph": round(max(0.0, field.get("activate_at", now) - now), 2),
-                                 "duration": round(max(.01, field["until"] - field["started"]), 2)}
-                                for field in ground_effects]}
-
 
 async def send_event(event: dict[str, Any]) -> None:
     payload = json.dumps(event, ensure_ascii=False)
@@ -525,11 +441,8 @@ async def tell(pid: str, text: str) -> None:
 
 
 async def sync_station_state(p: dict[str, Any]) -> None:
-    """Persist station transactions and immediately refresh the player's client."""
+    """Persist station transactions; the v2 tick sends the refreshed inventory."""
     save_character(p)
-    pid = str(p.get("id", ""))
-    await send_event({"type": "player_update", "target": pid,
-                      "player": player_row(pid, p, time.monotonic())})
 
 
 def mana_growth_bonus(p: dict[str, Any]) -> int:
@@ -1402,8 +1315,7 @@ async def choose_class(p: dict[str, Any], msg: dict[str, Any]) -> None:
     except sqlite3.Error:
         pass
     await send_event({"type": "class_selected", "target": p["id"], "class": chosen,
-                      "class_name": CLASSES[chosen]["name"], "bonus": applied,
-                      "player": player_row(p["id"], p, time.monotonic())})
+                      "class_name": CLASSES[chosen]["name"], "bonus": applied})
     await send_event(stats_updated_event(p["id"], p))
     await tell(p["id"], f"Класс выбран: {CLASSES[chosen]['name']}. Постоянные бонусы: {', '.join(applied) or 'нет'}.")
 
@@ -2095,9 +2007,14 @@ def player_row2(q: dict[str, Any], now: float, mine: bool) -> dict[str, Any]:
     if q["respawn_at"] > now: row["rs"] = 1
     if q["gathering"]: row["ga"] = round(q["gathering"]["progress"] / 1.15, 2)
     if mine:
-        row.update({"xp": q["xp"], "xpn": q["level"] * 120, "dr": int(now >= q["dodge_at"]),
-                    "ex": int(now < q.get("exhausted_until", 0)), "ack": int(q.get("seq", 0)),
-                    "z": zone_for_x(q["x"])["id"], "gold": q["gold"]})
+        row.update({
+            "xp": q["xp"], "xpn": q["level"] * 120,
+            "dr": int(now >= q["dodge_at"]), "ex": int(now < q.get("exhausted_until", 0)),
+            "ack": int(q.get("seq", 0)), "z": zone_for_x(q["x"])["id"], "gold": q["gold"],
+            "mp": round(q.get("mana", 0)), "mmp": q.get("max_mana", 60),
+            "cl": q.get("class"), "co": int(q["level"] >= CLASS_MIN_LEVEL and not q.get("class")),
+            "ms2": mastery_view(q), "ab": abilities_view(q, now), "ef": player_effects(q, now),
+        })
     return row
 
 
@@ -2131,6 +2048,11 @@ def init_message(pid: str) -> dict[str, Any]:
                  | {"range": w.get("range", 420), "arc": w.get("arc", .28), "spell_power": w.get("spell_power", 0)}
             for wid, w in WEAPONS.items()}
     return {"type": "init", "v": 2, "you": pid, "world": {"w": WORLD_W, "h": WORLD_H}, "zones": ZONES, "phys": PHYS,
+            "classes": CLASSES,
+            "abilities": {k: {kk: vv for kk, vv in v.items()
+                              if kk in ("id", "tree", "name", "icon", "mastery", "cost", "arrows", "key", "desc")}
+                          for k, v in ABILITY_CATALOG.items()},
+            "spells": SPELLS,
             "weapons": wcat, "gear": GEAR, "items": ITEM_NAMES, "skin_parts": SKIN_PARTS,
             "monsters": {k: {"name": v["name"], "color": v["color"], "boss": bool(v.get("boss")), "range": v["range"],
                              "r": MOB_R.get(k, 20)} for k, v in MONSTERS.items()},
@@ -2438,15 +2360,12 @@ async def push_state(pid: str, ws: WebSocket, now: float) -> None:
     if not p:
         return
     try:
-        if p.get("proto") == 2:
-            sync_slots(p)
-            sig = inv_signature(p)
-            if sig != p.get("_inv_sig"):
-                p["_inv_sig"] = sig
-                await ws.send_text(json.dumps(inv_payload(p), ensure_ascii=False, separators=(",", ":")))
-            await ws.send_text(json.dumps(snapshot2(pid, now), ensure_ascii=False, separators=(",", ":")))
-        else:
-            await ws.send_text(json.dumps(snapshot(pid), ensure_ascii=False))
+        sync_slots(p)
+        sig = inv_signature(p)
+        if sig != p.get("_inv_sig"):
+            p["_inv_sig"] = sig
+            await ws.send_text(json.dumps(inv_payload(p), ensure_ascii=False, separators=(",", ":")))
+        await ws.send_text(json.dumps(snapshot2(pid, now), ensure_ascii=False, separators=(",", ":")))
     except Exception:
         pass
 
@@ -2732,7 +2651,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         await websocket.send_text(json.dumps({"type": "error", "message": "Мир полон. Максимум 8 следопытов."}, ensure_ascii=False))
         await websocket.close(code=1008); return
     pid = uuid.uuid4().hex[:8]
-    proto = 2 if websocket.query_params.get("v") == "2" else 1
     name = safe_name(account["username"])
     p = {"id": pid, "name": name, "x": 330.0, "y": 1100.0, "mx": 0.0, "my": 0.0,
          "face_x": 1.0, "face_y": 0.0, "hp": 100, "max_hp": 100, "stamina": 100.0, "max_stamina": 100,
@@ -2746,17 +2664,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
          "roar_until": 0.0, "guard_until": 0.0, "ability_lock_until": 0.0,
          "dodge_at": 0.0, "dodge_until": 0.0, "weapon": "fists", "weapons": [],
          "vx": 0.0, "vy": 0.0, "kx": 0.0, "ky": 0.0, "sprint": False, "seq": 0, "combo": 0, "combo_at": 0.0,
-         "slots": [], "sel": 0, "proto": proto, "skin": random_skin(),
+         "slots": [], "sel": 0, "skin": random_skin(),
          "gear": "traveler", "gear_inventory": [],
          "inventory": {"wood": 0, "herb": 0, "ore": 0, "hide": 0, "slime": 0, "crystal": 0, "shard": 0, "potion": 2, "arrows": 0},
          "quest_stage": 0, "quest_active": False, "quest_kills": {}, "quest_gather": {},
          "gathering": None, "last_chat": 0.0}
     saved = load_character(name)
-    if not saved and proto == 1:
-        p["weapon"], p["weapons"] = "sword", ["sword", "axe", "bow"]
-        p["inventory"]["arrows"] = 18
     p.update(saved)
-    p["proto"], p["skin"] = proto, random_skin()
+    p["skin"] = random_skin()
     for key in ("vx", "vy", "kx", "ky"): p[key] = 0.0
     # Safe migration for old saves: missing class/mastery/cooldowns become neutral,
     # while every existing level, item, spell and statistic is kept intact.
@@ -2811,17 +2726,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     p["quest_stage"] = max(0, min(len(QUESTS), int(p["quest_stage"])))
     update_derived(p)
     players[pid] = p; clients[pid] = websocket
-    if proto == 2:
-        # keep the previously equipped weapon selected when it already sits on the hotbar
-        sync_slots(p)
-        equipped = "w:" + p["weapon"]
-        if equipped in p["slots"][:9]:
-            p["sel"] = p["slots"].index(equipped)
-        apply_selection(p)
-        await websocket.send_text(json.dumps(init_message(pid), ensure_ascii=False, separators=(",", ":")))
-    else:
-        await websocket.send_text(json.dumps(snapshot(pid), ensure_ascii=False))
-    if proto == 1 and p["level"] >= CLASS_MIN_LEVEL and not p["class"]:
+    # Keep the equipped weapon selected when it already sits on the hotbar.
+    sync_slots(p)
+    equipped = "w:" + p["weapon"]
+    if equipped in p["slots"][:9]:
+        p["sel"] = p["slots"].index(equipped)
+    apply_selection(p)
+    await websocket.send_text(json.dumps(init_message(pid), ensure_ascii=False, separators=(",", ":")))
+    if p["level"] >= CLASS_MIN_LEVEL and not p["class"]:
         await send_event({"type": "class_offer", "target": pid, "level": p["level"],
                           "classes": CLASSES})
     await send_event({"type": "notice", "text": f"{name} прибыл(а) в Лес Эхо."})

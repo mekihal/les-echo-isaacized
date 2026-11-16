@@ -21,6 +21,7 @@
     <div class="bars">
       <div class="bar hp" title="Здоровье"><i id="hpFill"></i><i id="hpGhost"></i><span id="hpText">100/100</span></div>
       <div class="bar st" id="stBar" title="Выносливость — расходуется на бег, рывок и удары"><i id="stFill"></i><span id="stText">100</span></div>
+      <div class="bar mana" title="Мана"><i id="h-mana"></i><span id="h-mana-t">60/60</span></div>
       <div class="bar xp" title="Опыт"><i id="xpFill"></i></div>
       <div class="row"><span id="gold"><i class="coin"></i><span id="goldN">0</span></span><span id="comboTag" class="hidden">КОМБО</span><span id="exhaust" class="hidden">ЗАПЫХАЛСЯ</span></div>
     </div>
@@ -37,6 +38,7 @@
   <div id="prompt" class="hidden"></div>
 
   <div id="hotWrap">
+    <div id="skillbar" class="hidden" aria-label="Способности класса"></div>
     <div id="itemName"></div>
     <div id="hotbar"></div>
   </div>
@@ -86,6 +88,14 @@
 <div id="help" class="overlay hidden"><div class="window panel narrow"><header><h2>Управление</h2><span class="hint"><kbd>H</kbd> — закрыть</span><button class="chip closeBtn" data-close="1">Закрыть</button></header><div id="helpBody"></div><div id="helpActions"></div></div></div>
 <div id="mapOv" class="overlay hidden"><div class="window panel"><header><h2>Карта мира</h2><span class="hint"><kbd>M</kbd> — закрыть</span><button class="chip closeBtn" data-close="1">Закрыть</button></header><canvas id="bigMap"></canvas></div></div>
 
+<div id="class-modal" class="overlay class-overlay hidden">
+  <div class="window panel class-panel">
+    <header><h2>Выбери свой класс</h2></header>
+    <p class="sub">Решение постоянное: изменить класс после выбора нельзя.</p>
+    <div id="class-choices" class="class-choice-grid"></div>
+  </div>
+</div>
+
 <div id="auth" class="overlay">
   <form id="authForm" class="window panel narrow" autocomplete="on">
     <h1>ЛЕС ЭХО</h1><p class="sub">пиксельная кооп-RPG · версия 2.0</p>
@@ -95,7 +105,6 @@
     <label id="authPass2Wrap" class="hidden">Повтор пароля<input id="authPass2" type="password" autocomplete="new-password"></label>
     <div id="authErr"></div>
     <button class="big" id="authGo">Войти в лес</button>
-    <p class="sub small">Старая версия клиента: <a href="/legacy">/legacy</a></p>
   </form>
 </div>
 <div id="held" class="hidden"><img alt=""></div>
