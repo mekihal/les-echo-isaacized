@@ -164,8 +164,23 @@ function onEvent(m) {
       return;
     }
     case 'ability_cast': {
-      const color = m.ability === 'roar' ? '#ff7b54' : m.ability === 'iron_guard' ? '#73d5ff' : '#f2d17d';
-      if (m.ability === 'lunge') {
+      const mageColors = {
+        arcane_bolt: '#bd77ff', frost_ring: '#55dfff',
+        mana_heal: '#53dfa0', storm_call: '#9b79ff',
+      };
+      const color = mageColors[m.ability] || (m.ability === 'roar' ? '#ff7b54' : m.ability === 'iron_guard' ? '#73d5ff' : '#f2d17d');
+      if (m.ability === 'arcane_bolt') {
+        fx.burst(m.x, m.y, [color, '#e4caff', '#ffffff'], 8, 145, 55, .3);
+      } else if (m.ability === 'frost_ring') {
+        fx.ring(m.x, m.y, m.radius || 135, color);
+        fx.burst(m.x, m.y, [color, '#d9fbff'], 18, 165, 60, .4);
+      } else if (m.ability === 'mana_heal') {
+        fx.ring(m.x, m.y, 54, color);
+        fx.burst(m.x, m.y, [color, '#baffd9', '#ffffff'], 16, 145, 65, .4);
+      } else if (m.ability === 'storm_call') {
+        fx.ring(m.target_x, m.target_y, m.radius || 140, color);
+        fx.burst(m.target_x, m.target_y, [color, '#d8caff', '#ffffff'], 20, 180, 70, .4);
+      } else if (m.ability === 'lunge') {
         const dx = m.target_x - m.from_x, dy = m.target_y - m.from_y;
         const distance = Math.hypot(dx, dy), steps = Math.min(8, Math.max(2, Math.ceil(distance / 34)));
         for (let i = 1; i <= steps; i++) {
@@ -184,13 +199,16 @@ function onEvent(m) {
       return;
     }
     case 'ability_impact': {
-      const color = m.element === 'fire' ? '#ff6b3d' : m.element === 'ice' ? '#70e1ff' : '#d9f2b4';
+      const color = m.element === 'fire' ? '#ff6b3d' : m.element === 'ice' ? '#70e1ff'
+        : m.element === 'Аркана' ? '#bd77ff' : '#d9f2b4';
       fx.burst(m.x, m.y, [color, '#ffffff'], 10, 165, 65, .35);
       return;
     }
-    case 'ground_pulse':
-      fx.ring(m.x, m.y, m.radius || 110, '#a8d982');
-      fx.burst(m.x, m.y, ['#a8d982', '#f2e8b0'], 12, 150, 45, .35);
+    case 'ground_pulse': {
+      const color = m.kind === 'arcane_storm' ? '#9b79ff' : '#a8d982';
+      fx.ring(m.x, m.y, m.radius || 110, color);
+      fx.burst(m.x, m.y, [color, '#e5dcff', '#ffffff'], 12, 150, 45, .35);
+    }
       return;
   }
 }
@@ -462,7 +480,19 @@ const sxOf = (wx) => Math.floor(wx * PX) - CPX + (V.W >> 1), syOf = (wy) => Math
 function dotRing(cx, cy, r, col, n = 36, ry = .75, a = 1) { ctx.fillStyle = col; ctx.globalAlpha = a; for (let k = 0; k < n; k++) { const t = k / n * 6.283; ctx.fillRect(Math.floor(cx + Math.cos(t) * r), Math.floor(cy + Math.sin(t) * r * ry), 1, 1); } ctx.globalAlpha = 1; }
 function groundLayer(now, x0, y0, x1, y1) {
   for (const s of init.power_sites) if (s.x > x0 - s.radius && s.x < x1 + s.radius && s.y > y0 - s.radius && s.y < y1 + s.radius) { const px = sxOf(s.x), py = syOf(s.y); dotRing(px, py, s.radius * PX, '#9fffc8', 60, .75, .45); dotRing(px, py, s.radius * PX * .6, '#9fffc8', 36, .75, .25 + .2 * Math.sin(tClock * 2)); if (Math.hypot(s.x - net.me.x, s.y - net.me.y) < s.radius) drawLabel(s.x, s.y - 4, s.name, '#9fffc8'); }
-  for (const g of net.ground) { const px = sxOf(g.x), py = syOf(g.y); if (g.tl > 0) { dotRing(px, py, g.r * PX, '#ff4a3a', 40, .75, .6 + .4 * Math.sin(tClock * 18)); ctx.fillStyle = 'rgba(255,60,40,.14)'; ctx.fillRect(px - g.r * PX * .5, py - 2, g.r * PX, 4); } else { dotRing(px, py, g.r * PX, '#ff8a2a', 40, .75, .8); ctx.fillStyle = 'rgba(255,120,30,.18)'; for (let i = 0; i < 5; i++) ctx.fillRect(px + (hash2(i, g.x | 0) - .5) * g.r * PX, py + (hash2(i + 9, g.y | 0) - .5) * g.r * PX * .7, 3, 2); } }
+  for (const g of net.ground) {
+    const px = sxOf(g.x), py = syOf(g.y), arcane = g.kind === 'arcane_storm';
+    const warn = arcane ? '#9b79ff' : '#ff4a3a', active = arcane ? '#bd77ff' : '#ff8a2a';
+    if (g.tl > 0) {
+      dotRing(px, py, g.r * PX, warn, 40, .75, .6 + .4 * Math.sin(tClock * 18));
+      ctx.fillStyle = arcane ? 'rgba(155,121,255,.16)' : 'rgba(255,60,40,.14)';
+      ctx.fillRect(px - g.r * PX * .5, py - 2, g.r * PX, 4);
+    } else {
+      dotRing(px, py, g.r * PX, active, 40, .75, .8);
+      ctx.fillStyle = arcane ? 'rgba(189,119,255,.18)' : 'rgba(255,120,30,.18)';
+      for (let i = 0; i < 5; i++) ctx.fillRect(px + (hash2(i, g.x | 0) - .5) * g.r * PX, py + (hash2(i + 9, g.y | 0) - .5) * g.r * PX * .7, 3, 2);
+    }
+  }
   for (const t of net.thorns) dotRing(sxOf(t.x), syOf(t.y), t.r * PX, '#7ad85a', 28, .75, .7);
   // charge preview: range + hit arc so the player always sees what will be hit
   if (atk.charging && canAct()) {

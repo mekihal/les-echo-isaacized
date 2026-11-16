@@ -169,9 +169,9 @@ CLASSES = {
     },
     "mage": {
         "name": "Маг", "title": "Хранитель чар", "style": "Магия посоха",
-        "description": "Использует прежнюю систему заклинаний и созданных чар. Сила магии растёт вместе с мастерством направления.",
+        "description": "Повелевает маной и стихиями. Боевые чары усиливаются вместе с мастерством посоха, а обычные заклинания и созданные чары остаются доступны.",
         "stat_bonus": {"vitality": 1, "magic_damage": 1, "mana_regen": 1},
-        "abilities": [],
+        "abilities": ["arcane_bolt", "frost_ring", "mana_heal", "storm_call"],
     },
 }
 ABILITY_CATALOG = {
@@ -208,6 +208,20 @@ ABILITY_CATALOG = {
                     "cost": 26, "arrows": 2, "cooldown": 6.5, "range": 760.0, "shots": 2,
                     "spread": 0.09, "mult": 0.78, "key": "KeyX",
                     "desc": "Выпускает две стрелы веером по направлению прицела."},
+    "arcane_bolt": {"tree": "mage", "name": "Эхо-разряд", "icon": "✨", "mastery": 1,
+                    "mana_cost": 16, "cooldown": 2.5, "range": 620.0, "mult": 1.15, "key": "KeyR",
+                    "desc": "Выпускает сгусток эха в сторону прицела."},
+    "frost_ring": {"tree": "mage", "name": "Кольцо инея", "icon": "❄", "mastery": 2,
+                   "mana_cost": 26, "cooldown": 7.0, "radius": 135.0, "mult": 1.0,
+                   "slow_duration": 3.5, "slow_factor": 0.45, "key": "KeyT",
+                   "desc": "Наносит урон и замедляет врагов вокруг мага."},
+    "mana_heal": {"tree": "mage", "name": "Поток жизни", "icon": "💚", "mastery": 3,
+                  "mana_cost": 28, "cooldown": 9.0, "heal": 55, "key": "KeyC",
+                  "desc": "Восстанавливает магу до 55 единиц здоровья."},
+    "storm_call": {"tree": "mage", "name": "Звёздный шторм", "icon": "⚡", "mastery": 4,
+                   "mana_cost": 40, "cooldown": 12.0, "range": 500.0, "radius": 140.0,
+                   "duration": 2.0, "telegraph": 0.6, "tick": 0.5, "mult": 0.65, "key": "KeyV",
+                   "desc": "Накрывает выбранную область серией магических ударов."},
 }
 for _ability_id, _ability_spec in ABILITY_CATALOG.items():
     _ability_spec["id"] = _ability_id
@@ -573,7 +587,8 @@ def abilities_view(p: dict[str, Any], now: float) -> dict[str, dict[str, Any]]:
         until = float(cooldowns.get(ability_id, 0) or 0)
         result[ability_id] = {
             "id": ability_id, "tree": spec["tree"], "name": spec["name"], "icon": spec.get("icon", "✦"),
-            "desc": spec["desc"], "cost": int(spec.get("cost", 0)), "arrows": int(spec.get("arrows", 0)),
+            "desc": spec["desc"], "cost": int(spec.get("cost", 0)),
+            "mana_cost": int(spec.get("mana_cost", 0)), "arrows": int(spec.get("arrows", 0)),
             "mastery_required": int(spec["mastery"]), "unlocked": ability_unlocked(p, ability_id),
             "key": spec.get("key", ""), "cooldown": ability_cooldown_seconds(p, ability_id),
             "range": float(spec.get("range", 0) or 0), "radius": float(spec.get("radius", 0) or 0),
@@ -1350,8 +1365,13 @@ async def use_ability(p: dict[str, Any], now: float, ability_id: str, aim_x: flo
     if float(cooldowns.get(ability_id, 0) or 0) > now:
         await tell(p["id"], f"«{spec['name']}» перезаряжается: {float(cooldowns[ability_id]) - now:.1f} с.")
         return
+    mana_cost = int(spec.get("mana_cost", 0))
     cost = int(spec.get("cost", 0))
-    if float(p.get("stamina", 0)) < cost:
+    if mana_cost:
+        if float(p.get("mana", 0)) < mana_cost:
+            await tell(p["id"], f"Мало маны: нужно {mana_cost}, сейчас {int(p.get('mana', 0))}.")
+            return
+    elif float(p.get("stamina", 0)) < cost:
         await tell(p["id"], f"Мало выносливости: нужно {cost}, сейчас {int(p.get('stamina', 0))}.")
         return
     arrow_cost = int(spec.get("arrows", 0))
@@ -1377,7 +1397,18 @@ async def use_ability(p: dict[str, Any], now: float, ability_id: str, aim_x: flo
     else:
         tx = max(0.0, min(WORLD_W, p["x"] + aim_x * (max_range or 180)))
         ty = max(0.0, min(WORLD_H, p["y"] + aim_y * (max_range or 180)))
-    p["stamina"] -= cost
+    if mana_cost:
+        p["mana"] = max(0.0, float(p.get("mana", 0)) - mana_cost)
+        old_mana_spent = int(p.get("magic_mana_spent", 0))
+        p["magic_mana_spent"] = old_mana_spent + mana_cost
+        # Keep mana-cap growth and spell unlock progression in sync with regular spells.
+        update_derived(p)
+        for unlocked_id, unlocked_spec in all_spells(p).items():
+            threshold = int(unlocked_spec.get("unlock_spent", 0))
+            if threshold and old_mana_spent < threshold <= p["magic_mana_spent"]:
+                await tell(p["id"], f"Открыт порог потраченной маны для заклинания «{unlocked_spec['name']}»; проверь также требуемый уровень {unlocked_spec.get('unlock_level', 1)}.")
+    else:
+        p["stamina"] -= cost
     if arrow_cost:
         p["inventory"]["arrows"] = max(0, int(p["inventory"].get("arrows", 0)) - arrow_cost)
     cooldowns[ability_id] = now + ability_cooldown_seconds(p, ability_id)
@@ -1387,9 +1418,63 @@ async def use_ability(p: dict[str, Any], now: float, ability_id: str, aim_x: flo
     p["face_x"], p["face_y"] = aim_x, aim_y
     p["last_ability"] = ability_id
     event = _ability_event(p, ability_id, tx, ty, aim_x, aim_y)
-    power = weapon_power(p) * float(spec.get("mult", 1.0))
+    if tree == "mage":
+        staff = WEAPONS.get(p.get("weapon", ""), {})
+        staff_upgrade = 6 * item_upgrade_level(p, "weapon", p.get("weapon", "")) if staff.get("kind") == "staff" else 0
+        staff_base = float(staff.get("damage", 0)) + float(staff.get("bonus", 0)) * .55 + staff_upgrade
+        magic_scale = (1.0 + float(staff.get("spell_power", 0))
+                       + .08 * int(p.get("magic_damage_level", 0))
+                       + .02 * (mastery_level(p, "mage") - 1))
+        power = max(1.0, staff_base * magic_scale * float(spec.get("mult", 1.0)))
+    else:
+        power = weapon_power(p) * float(spec.get("mult", 1.0))
     hits = 0
-    if ability_id == "roar":
+    if ability_id == "mana_heal":
+        before = int(p.get("hp", 0))
+        p["hp"] = min(p["max_hp"], p["hp"] + int(spec["heal"]))
+        healed = int(p["hp"]) - before
+        event["target_x"], event["target_y"] = round(p["x"], 1), round(p["y"], 1)
+        event["healed"] = healed
+        await send_event(event)
+        await tell(p["id"], f"Поток жизни восстановил {healed} здоровья.")
+    elif ability_id == "arcane_bolt":
+        speed = 680.0
+        max_distance = float(spec["range"])
+        arrows.append({
+            "x": p["x"] + aim_x * 18, "y": p["y"] + aim_y * 18,
+            "vx": aim_x * speed, "vy": aim_y * speed,
+            "damage": max(1, round(power)), "owner": p["id"],
+            "life": max_distance / speed + .08,
+            "max_distance": max_distance, "travelled": 0.0,
+            "kind": "ability_arrow", "element": "Аркана",
+            "pierce": 0, "hit_ids": [],
+        })
+        await send_event(event)
+    elif ability_id == "frost_ring":
+        event["target_x"], event["target_y"] = round(p["x"], 1), round(p["y"], 1)
+        for mob in list(mobs):
+            if mob["hp"] > 0 and math.hypot(mob["x"] - p["x"], mob["y"] - p["y"]) <= float(spec["radius"]):
+                spell_damage(p, mob, power, now)
+                if mob["hp"] > 0:
+                    mob["slow_until"] = max(float(mob.get("slow_until", 0) or 0), now + float(spec["slow_duration"]))
+                    mob["slow_factor"] = float(spec["slow_factor"])
+                hits += 1
+        _damage_players_around(p, now, p["x"], p["y"], float(spec["radius"]), power, "frost_ring")
+        await send_event(event)
+    elif ability_id == "storm_call":
+        field = {
+            "id": f"storm-{uuid.uuid4().hex[:8]}", "kind": "arcane_storm", "owner": p["id"],
+            "x": tx, "y": ty, "radius": float(spec["radius"]), "damage": power,
+            "started": now, "activate_at": now + float(spec["telegraph"]),
+            "until": now + float(spec["telegraph"]) + float(spec["duration"]),
+            "next_hit": now + float(spec["telegraph"]), "tick": float(spec["tick"]),
+        }
+        ground_effects.append(field)
+        event["ground"] = {"id": field["id"], "kind": field["kind"], "x": round(tx, 1), "y": round(ty, 1),
+                           "radius": field["radius"], "telegraph": field["activate_at"] - now,
+                           "duration": field["until"] - field["activate_at"]}
+        await send_event(event)
+    elif ability_id == "roar":
         p["roar_until"] = max(float(p.get("roar_until", 0) or 0), now + float(spec["duration"]))
         await send_event(event)
         await tell(p["id"], f"Свирепый рык: восстановление здоровья усилено на {spec['duration']:.0f} с.")
@@ -2050,7 +2135,8 @@ def init_message(pid: str) -> dict[str, Any]:
     return {"type": "init", "v": 2, "you": pid, "world": {"w": WORLD_W, "h": WORLD_H}, "zones": ZONES, "phys": PHYS,
             "classes": CLASSES,
             "abilities": {k: {kk: vv for kk, vv in v.items()
-                              if kk in ("id", "tree", "name", "icon", "mastery", "cost", "arrows", "key", "desc")}
+                              if kk in ("id", "tree", "name", "icon", "mastery", "cost", "mana_cost",
+                                        "arrows", "key", "desc", "cooldown", "range", "radius")}
                           for k, v in ABILITY_CATALOG.items()},
             "spells": SPELLS,
             "weapons": wcat, "gear": GEAR, "items": ITEM_NAMES, "skin_parts": SKIN_PARTS,

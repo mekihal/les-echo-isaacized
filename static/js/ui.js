@@ -238,15 +238,19 @@ export class UI {
     const bar = $('skillbar');
     if (!bar) return;
     const skills = Object.values(me?.ab || {}).filter((a) => a.tree === me.cl);
-    const sig = `${me?.cl || ''}|` + skills.map((a) => [a.id, a.unlocked, a.remaining, a.key].join(':')).join('|');
+    const sig = `${me?.cl || ''}|` + skills.map((a) => [a.id, a.unlocked, Math.ceil(Number(a.remaining) || 0), a.key].join(':')).join('|');
     if (sig === this._skillSig) return;
     this._skillSig = sig;
     if (!skills.length) { bar.innerHTML = ''; bar.classList.add('hidden'); return; }
     bar.innerHTML = skills.map((a) => {
       const key = esc(String(a.key || '').replace(/^Key/, ''));
-      const cd = Number(a.remaining) > 0 ? `<span class="sk-cd">${Number(a.remaining).toFixed(1)}</span>` : '';
+      const remaining = Number(a.remaining) || 0;
+      const cd = remaining > 0 ? `<span class="sk-cd">${Math.ceil(remaining)}</span>` : '';
       const lock = a.unlocked ? '' : ' locked';
-      return `<div class="skill-slot${lock}" title="${esc(a.name)}: ${esc(a.desc)}">
+      const resource = Number(a.mana_cost) > 0 ? ` · ${Number(a.mana_cost)} маны`
+        : Number(a.cost) > 0 ? ` · ${Number(a.cost)} выносливости` : '';
+      const arrows = Number(a.arrows) > 0 ? ` · ${Number(a.arrows)} стрел` : '';
+      return `<div class="skill-slot${lock}" title="${esc(a.name)}${resource}${arrows}: ${esc(a.desc)}">
         <span class="sk-key">${key}</span><span class="sk-ico">${esc(a.icon || '✦')}</span>${cd}
       </div>`;
     }).join('');
