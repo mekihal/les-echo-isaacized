@@ -163,52 +163,53 @@ function onEvent(m) {
       fx.burst(m.x, m.y, colors, 14, 180, 100, .45);
       return;
     }
-    case 'ability_cast': {
-      const mageColors = {
-        arcane_bolt: '#bd77ff', frost_ring: '#55dfff',
-        mana_heal: '#53dfa0', storm_call: '#9b79ff',
-      };
-      const color = mageColors[m.ability] || (m.ability === 'roar' ? '#ff7b54' : m.ability === 'iron_guard' ? '#73d5ff' : '#f2d17d');
-      if (m.ability === 'arcane_bolt') {
-        fx.burst(m.x, m.y, [color, '#e4caff', '#ffffff'], 8, 145, 55, .3);
-      } else if (m.ability === 'frost_ring') {
-        fx.ring(m.x, m.y, m.radius || 135, color);
-        fx.burst(m.x, m.y, [color, '#d9fbff'], 18, 165, 60, .4);
-      } else if (m.ability === 'mana_heal') {
-        fx.ring(m.x, m.y, 54, color);
-        fx.burst(m.x, m.y, [color, '#baffd9', '#ffffff'], 16, 145, 65, .4);
-      } else if (m.ability === 'storm_call') {
-        fx.ring(m.target_x, m.target_y, m.radius || 140, color);
-        fx.burst(m.target_x, m.target_y, [color, '#d8caff', '#ffffff'], 20, 180, 70, .4);
-      } else if (m.ability === 'lunge') {
-        const dx = m.target_x - m.from_x, dy = m.target_y - m.from_y;
-        const distance = Math.hypot(dx, dy), steps = Math.min(8, Math.max(2, Math.ceil(distance / 34)));
-        for (let i = 1; i <= steps; i++) {
-          const t = i / steps;
-          fx.burst(m.from_x + dx * t, m.from_y + dy * t, ['#f2d17d', '#fff4d0'], 3, 110, 35, .25);
-        }
-      } else if (m.ability === 'whirlwind') {
-        fx.ring(m.x, m.y, m.radius || 112, color);
-        fx.burst(m.x, m.y, [color, '#fff4d0'], 18, 190, 70, .35);
-      } else if (m.ability === 'roar' || m.ability === 'iron_guard') {
-        fx.ring(m.x, m.y, 48, color);
-        fx.burst(m.x, m.y, [color, '#ffffff'], 12, 125, 45, .3);
-      } else {
-        fx.burst(m.target_x, m.target_y, [color, '#ffffff'], 10, 170, 55, .35);
+    case 'ability_windup':
+      fx.implode(m.x, m.y, ['#70e1ff', '#bd77ff', '#ffffff'], 16, 40, m.windup || 0.3);
+      fx.runes(m.x, m.y, 24, ['#bd77ff', '#6edfff'], m.windup || 0.3);
+      if (m.ability === 'storm_call') {
+        fx.runes(m.target_x, m.target_y, m.radius || 140, ['#ffd274', '#ff6b3d'], (m.windup || 0.4) + 0.6);
       }
       return;
-    }
+    case 'ability_cast':
+      if (m.ability === 'arcane_bolt') {
+        fx.sparks(m.x + m.aim_x * 18, m.y + m.aim_y * 18, '#70e1ff', 14, 260);
+        fx.shake(.15, m.aim_x, m.aim_y);
+      } else if (m.ability === 'frost_ring') {
+        fx.runes(m.x, m.y, m.radius || 135, ['#40d9ff', '#ffffff'], .45);
+        fx.burst(m.x, m.y, ['#40d9ff', '#a4f3ff', '#ffffff'], 34, 320, 140, .7);
+        fx.shake(.25);
+      } else if (m.ability === 'mana_heal') {
+        fx.runes(m.x, m.y, 44, ['#53dfa0', '#b4ffda'], .55);
+        fx.burst(m.x, m.y, ['#53dfa0', '#b4ffda', '#ffffff'], 24, 90, 220, .8);
+      } else if (m.ability === 'storm_call') {
+        fx.runes(m.target_x, m.target_y, m.radius || 140, ['#bd77ff', '#6edfff'], .6);
+      } else if (m.ability === 'lunge') {
+        fx.burst(m.target_x, m.target_y, ['#f2d17d', '#ffffff'], 12, 180, 60, .35);
+      } else if (m.ability === 'whirlwind') {
+        fx.ring(m.x, m.y, m.radius || 112, '#f2d17d');
+      } else if (m.ability === 'roar' || m.ability === 'iron_guard') {
+        fx.ring(m.x, m.y, 48, m.ability === 'roar' ? '#ff7b54' : '#73d5ff');
+      }
+      return;
     case 'ability_impact': {
       const color = m.element === 'fire' ? '#ff6b3d' : m.element === 'ice' ? '#70e1ff'
         : m.element === 'Аркана' ? '#bd77ff' : '#d9f2b4';
       fx.burst(m.x, m.y, [color, '#ffffff'], 10, 165, 65, .35);
       return;
     }
-    case 'ground_pulse': {
-      const color = m.kind === 'arcane_storm' ? '#9b79ff' : '#a8d982';
-      fx.ring(m.x, m.y, m.radius || 110, color);
-      fx.burst(m.x, m.y, [color, '#e5dcff', '#ffffff'], 12, 150, 45, .35);
-    }
+    case 'ground_pulse':
+      if (m.kind === 'storm_call') {
+        for (let i = 0; i < 3; i++) {
+          const a = Math.random() * 6.283, d = Math.random() * (m.radius || 140) * .8;
+          const hx = m.x + Math.cos(a) * d, hy = m.y + Math.sin(a) * d;
+          fx.beam(hx + (Math.random() - .5) * 40, hy - 180, hx, hy, ['#fff05a', '#6beaff', '#ffffff'], .22);
+          fx.burst(hx, hy, ['#bd77ff', '#6edfff', '#ffffff'], 10, 160, 110, .4);
+        }
+        fx.runes(m.x, m.y, m.radius || 140, ['#bd77ff', '#6edfff'], .45);
+        fx.shake(.18);
+      } else {
+        fx.ring(m.x, m.y, m.radius || 110, '#a8d982');
+      }
       return;
   }
 }
@@ -481,7 +482,7 @@ function dotRing(cx, cy, r, col, n = 36, ry = .75, a = 1) { ctx.fillStyle = col;
 function groundLayer(now, x0, y0, x1, y1) {
   for (const s of init.power_sites) if (s.x > x0 - s.radius && s.x < x1 + s.radius && s.y > y0 - s.radius && s.y < y1 + s.radius) { const px = sxOf(s.x), py = syOf(s.y); dotRing(px, py, s.radius * PX, '#9fffc8', 60, .75, .45); dotRing(px, py, s.radius * PX * .6, '#9fffc8', 36, .75, .25 + .2 * Math.sin(tClock * 2)); if (Math.hypot(s.x - net.me.x, s.y - net.me.y) < s.radius) drawLabel(s.x, s.y - 4, s.name, '#9fffc8'); }
   for (const g of net.ground) {
-    const px = sxOf(g.x), py = syOf(g.y), arcane = g.kind === 'arcane_storm';
+    const px = sxOf(g.x), py = syOf(g.y), arcane = g.kind === 'storm_call';
     const warn = arcane ? '#9b79ff' : '#ff4a3a', active = arcane ? '#bd77ff' : '#ff8a2a';
     if (g.tl > 0) {
       dotRing(px, py, g.r * PX, warn, 40, .75, .6 + .4 * Math.sin(tClock * 18));

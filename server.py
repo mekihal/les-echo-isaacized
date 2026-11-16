@@ -209,17 +209,17 @@ ABILITY_CATALOG = {
                     "spread": 0.09, "mult": 0.78, "key": "KeyX",
                     "desc": "Выпускает две стрелы веером по направлению прицела."},
     "arcane_bolt": {"tree": "mage", "name": "Эхо-разряд", "icon": "✨", "mastery": 1,
-                    "mana_cost": 16, "cooldown": 2.5, "range": 620.0, "mult": 1.15, "key": "KeyR",
+                    "mana_cost": 16, "cooldown": 2.5, "windup": 0.26, "range": 620.0, "mult": 1.15, "key": "KeyR",
                     "desc": "Выпускает сгусток эха в сторону прицела."},
     "frost_ring": {"tree": "mage", "name": "Кольцо инея", "icon": "❄", "mastery": 2,
-                   "mana_cost": 26, "cooldown": 7.0, "radius": 135.0, "mult": 1.0,
+                   "mana_cost": 26, "cooldown": 7.0, "windup": 0.34, "radius": 135.0, "mult": 1.0,
                    "slow_duration": 3.5, "slow_factor": 0.45, "key": "KeyT",
                    "desc": "Наносит урон и замедляет врагов вокруг мага."},
     "mana_heal": {"tree": "mage", "name": "Поток жизни", "icon": "💚", "mastery": 3,
-                  "mana_cost": 28, "cooldown": 9.0, "heal": 55, "key": "KeyC",
+                  "mana_cost": 28, "cooldown": 9.0, "windup": 0.28, "heal": 55, "key": "KeyC",
                   "desc": "Восстанавливает магу до 55 единиц здоровья."},
     "storm_call": {"tree": "mage", "name": "Звёздный шторм", "icon": "⚡", "mastery": 4,
-                   "mana_cost": 40, "cooldown": 12.0, "range": 500.0, "radius": 140.0,
+                   "mana_cost": 40, "cooldown": 12.0, "windup": 0.42, "range": 500.0, "radius": 140.0,
                    "duration": 2.0, "telegraph": 0.6, "tick": 0.5, "mult": 0.65, "key": "KeyV",
                    "desc": "Накрывает выбранную область серией магических ударов."},
 }
@@ -1412,11 +1412,31 @@ async def use_ability(p: dict[str, Any], now: float, ability_id: str, aim_x: flo
     if arrow_cost:
         p["inventory"]["arrows"] = max(0, int(p["inventory"].get("arrows", 0)) - arrow_cost)
     cooldowns[ability_id] = now + ability_cooldown_seconds(p, ability_id)
-    p["ability_lock_until"] = now + .18
     p["gathering"] = None
     p["attack"] = None
     p["face_x"], p["face_y"] = aim_x, aim_y
     p["last_ability"] = ability_id
+    windup = float(spec.get("windup", 0) or 0)
+    if windup > 0:
+        p["ability_lock_until"] = now + windup + 0.1
+        p["cast_pending"] = {
+            "ability": ability_id, "fire_at": now + windup,
+            "aim_x": aim_x, "aim_y": aim_y, "tx": tx, "ty": ty,
+        }
+        await send_event({
+            "type": "ability_windup", "id": p["id"], "ability": ability_id,
+            "x": round(p["x"], 1), "y": round(p["y"], 1),
+            "target_x": round(tx, 1), "target_y": round(ty, 1),
+            "aim_x": aim_x, "aim_y": aim_y, "windup": windup,
+            "radius": float(spec.get("radius", 0) or 0),
+        })
+        return
+    p["ability_lock_until"] = now + .18
+    await _fire_ability(p, now, ability_id, aim_x, aim_y, tx, ty)
+
+
+async def _fire_ability(p: dict[str, Any], now: float, ability_id: str,
+                       aim_x: float, aim_y: float, tx: float, ty: float) -> None:
     event = _ability_event(p, ability_id, tx, ty, aim_x, aim_y)
     if tree == "mage":
         staff = WEAPONS.get(p.get("weapon", ""), {})
@@ -1463,7 +1483,7 @@ async def use_ability(p: dict[str, Any], now: float, ability_id: str, aim_x: flo
         await send_event(event)
     elif ability_id == "storm_call":
         field = {
-            "id": f"storm-{uuid.uuid4().hex[:8]}", "kind": "arcane_storm", "owner": p["id"],
+            "id": f"storm-{uuid.uuid4().hex[:8]}", "kind": "storm_call", "owner": p["id"],
             "x": tx, "y": ty, "radius": float(spec["radius"]), "damage": power,
             "started": now, "activate_at": now + float(spec["telegraph"]),
             "until": now + float(spec["telegraph"]) + float(spec["duration"]),
@@ -1885,7 +1905,7 @@ def step_player(p: dict[str, Any], now: float, dt: float) -> None:
     moving = math.hypot(mx, my) > .05
     sprinting = bool(p.get("sprint")) and moving and now >= p.get("exhausted_until", 0) and p["stamina"] > 1
     maxv = base * (PHYS["sprint"] if sprinting else 1.0)
-    if p["attack"]:
+    if p["attack"] or p.get("cast_pending"):
         maxv *= PHYS["charge_slow"]
     vx, vy = p.get("vx", 0.0), p.get("vy", 0.0)
     if moving:
@@ -2136,7 +2156,7 @@ def init_message(pid: str) -> dict[str, Any]:
             "classes": CLASSES,
             "abilities": {k: {kk: vv for kk, vv in v.items()
                               if kk in ("id", "tree", "name", "icon", "mastery", "cost", "mana_cost",
-                                        "arrows", "key", "desc", "cooldown", "range", "radius")}
+                                        "arrows", "key", "desc", "cooldown", "windup", "range", "radius")}
                           for k, v in ABILITY_CATALOG.items()},
             "spells": SPELLS,
             "weapons": wcat, "gear": GEAR, "items": ITEM_NAMES, "skin_parts": SKIN_PARTS,
@@ -2297,10 +2317,16 @@ async def handle_message(pid: str, p: dict[str, Any], msg: dict[str, Any], now: 
         try: slot = int(msg.get("slot", 0))
         except (TypeError, ValueError): return
         if 0 <= slot < 9:
+            if p.get("cast_pending"):
+                await tell(pid, "Дождись завершения подготовки заклинания, чтобы сменить оружие.")
+                return
             sync_slots(p); p["sel"] = slot; apply_selection(p)
     elif kind == "inv_move":
         try: a, b = int(msg.get("a", -1)), int(msg.get("b", -1))
         except (TypeError, ValueError): return
+        if p.get("cast_pending"):
+            await tell(pid, "Нельзя переставлять предметы во время подготовки заклинания.")
+            return
         sync_slots(p)
         if 0 <= a < len(p["slots"]) and 0 <= b < len(p["slots"]) and a != b:
             p["slots"][a], p["slots"][b] = p["slots"][b], p["slots"][a]
@@ -2310,6 +2336,9 @@ async def handle_message(pid: str, p: dict[str, Any], msg: dict[str, Any], now: 
         except (TypeError, ValueError): return
         sync_slots(p)
         key = p["slots"][slot] if 0 <= slot < len(p["slots"]) else None
+        if p.get("cast_pending") and key and key.startswith("w:"):
+            await tell(pid, "Дождись завершения подготовки заклинания, чтобы сменить оружие.")
+            return
         if key == "r:potion":
             await handle_message(pid, p, {"type": "use_potion"}, now)
         elif key and key.startswith("g:"):
@@ -2465,12 +2494,28 @@ async def world_tick() -> None:
         last_tick = now
         for pid, p in list(players.items()):
             if p["respawn_at"] and p["respawn_at"] <= now:
+                if p.pop("cast_pending", None):
+                    await tell(pid, "Подготовка заклинания прервана возвращением в лагерь.")
+                p["ability_lock_until"] = min(float(p.get("ability_lock_until", 0) or 0), now)
                 p["respawn_at"] = 0.0; p["x"], p["y"] = 330.0, 1100.0
                 p["vx"] = p["vy"] = p["kx"] = p["ky"] = 0.0; p["skin"] = random_skin()
                 p["hp"] = p["max_hp"]; p["stamina"] = p["max_stamina"]
                 await tell(pid, "Ты вернулся в лагерь. Потеряно немного времени, но не добыча.")
-            if p["respawn_at"] > now: continue
+            if p["respawn_at"] > now:
+                if p.pop("cast_pending", None):
+                    await tell(pid, "Подготовка заклинания прервана полученным смертельным ударом.")
+                continue
             step_player(p, now, dt)
+            cp = p.get("cast_pending")
+            if cp and now >= float(cp.get("fire_at", now + 1)):
+                p.pop("cast_pending", None)
+                pending_spec = ABILITY_CATALOG.get(str(cp.get("ability", "")), {})
+                if p.get("class") != pending_spec.get("tree") or weapon_kind(p) != TREE_WEAPON_KIND.get(str(pending_spec.get("tree", ""))):
+                    p["ability_lock_until"] = min(float(p.get("ability_lock_until", 0) or 0), now)
+                    await tell(pid, "Подготовка заклинания прервана: изменились условия применения.")
+                else:
+                    await _fire_ability(p, now, str(cp["ability"]), float(cp["aim_x"]),
+                                        float(cp["aim_y"]), float(cp["tx"]), float(cp["ty"]))
             p["mana"] = min(p["max_mana"], p.get("mana", 0) + (9.0 + 1.5 * p.get("mana_regen_level", 0)) * dt)
             if float(p.get("roar_until", 0) or 0) > now:
                 p["hp"] = min(p["max_hp"], p["hp"] + 6.0 * dt)

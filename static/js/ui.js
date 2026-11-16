@@ -237,8 +237,18 @@ export class UI {
   renderSkillbar(me) {
     const bar = $('skillbar');
     if (!bar) return;
-    const skills = Object.values(me?.ab || {}).filter((a) => a.tree === me.cl);
-    const sig = `${me?.cl || ''}|` + skills.map((a) => [a.id, a.unlocked, Math.ceil(Number(a.remaining) || 0), a.key].join(':')).join('|');
+    if (!me || !me.ab) {
+      bar.innerHTML = ''; bar.classList.add('hidden'); this._skillSig = '';
+      return;
+    }
+    const weaponKind = this.init?.weapons?.[me.w]?.kind;
+    if (me.cl === 'mage' && weaponKind !== 'staff') {
+      bar.innerHTML = ''; bar.classList.add('hidden');
+      this._skillSig = `mage|no-staff|${me.w || ''}`;
+      return;
+    }
+    const skills = Object.values(me.ab).filter((a) => a.tree === me.cl);
+    const sig = `${me?.cl || ''}|${me?.w || ''}|` + skills.map((a) => [a.id, a.unlocked, Math.ceil(Number(a.remaining) || 0), a.key].join(':')).join('|');
     if (sig === this._skillSig) return;
     this._skillSig = sig;
     if (!skills.length) { bar.innerHTML = ''; bar.classList.add('hidden'); return; }

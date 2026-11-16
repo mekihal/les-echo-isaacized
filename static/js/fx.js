@@ -15,6 +15,7 @@ export class FX {
     this.dx = new Float32Array(DN); this.dy = new Float32Array(DN); this.dsz = new Uint8Array(DN); this.dt = new Float32Array(DN);
     this.dcol = new Array(DN).fill('#000'); this.dn = 0; this.dhead = 0;
     this.slashes = []; this.texts = []; this.rings = [];
+    this.runesList = []; this.beams = [];
     this.trauma = 0; this.kx = 0; this.ky = 0; this.stopLeft = 0; this.stopDebt = 0; this.time = 0;
   }
   // ---- core spawn ----------------------------------------------------------------------
@@ -44,6 +45,26 @@ export class FX {
   burst(x, y, cols, n, speed, up = 120, life = .8) { for (let i = 0; i < n * this.quality; i++) { const a = Math.random() * 6.283, s = speed * Math.random(); this.add(x, y, 4, Math.cos(a) * s, Math.sin(a) * s, up * Math.random(), life * (.5 + Math.random() * .5), 1 + (Math.random() < .25), cols[(Math.random() * cols.length) | 0], 0); } }
   slash(x, y, ang, span, r, col, dur = .16, thick = 3, dir = 1) { this.slashes.push({ x, y, a: ang, s: span, r, t: 0, d: dur, col, th: thick, dir }); if (this.slashes.length > 24) this.slashes.shift(); }
   ring(x, y, r, col, dur = .35) { this.rings.push({ x, y, r, t: 0, d: dur, col }); if (this.rings.length > 16) this.rings.shift(); }
+  implode(x, y, cols, n = 14, r = 36, life = .32) {
+    const palette = cols?.length ? cols : ['#ffffff'];
+    for (let i = 0; i < n * this.quality; i++) {
+      const a = Math.random() * 6.283, dist = r * (.7 + Math.random() * .4);
+      const sp = (dist / Math.max(.08, life)) * 1.55;
+      this.add(x + Math.cos(a) * dist, y + Math.sin(a) * dist, 6 + Math.random() * 8,
+               -Math.cos(a) * sp, -Math.sin(a) * sp, 0, life * (.8 + Math.random() * .3),
+               1 + (Math.random() < .3), palette[(Math.random() * palette.length) | 0], 2);
+    }
+  }
+  runes(x, y, r, cols, dur = .45) {
+    const palette = cols?.length ? cols : ['#ffffff'];
+    this.runesList.push({ x, y, r, t: 0, d: Math.max(.05, dur), cols: palette });
+    if (this.runesList.length > 16) this.runesList.shift();
+  }
+  beam(x1, y1, x2, y2, cols, dur = .22) {
+    const palette = cols?.length ? cols : ['#ffffff'];
+    this.beams.push({ x1, y1, x2, y2, t: 0, d: Math.max(.05, dur), cols: palette, seed: Math.random() * 100 });
+    if (this.beams.length > 20) this.beams.shift();
+  }
   text(x, y, str, col, big = false) { this.texts.push({ x: x + (Math.random() - .5) * 10, y, s: String(str), col, big, t: 0, vy: -60 - (big ? 20 : 0) }); if (this.texts.length > 36) this.texts.shift(); }
   shake(p, dx = 0, dy = 0) { this.trauma = Math.min(1, this.trauma + p); this.kx += dx * p * 5; this.ky += dy * p * 5; }
   stop(ms) { this.stopLeft = Math.max(this.stopLeft, Math.min(ms, 120)); }
@@ -69,7 +90,15 @@ export class FX {
     for (let i = 0; i < this.dn; i++) if (this.dt[i] > 0) this.dt[i] -= rawDt;
     for (let i = this.slashes.length - 1; i >= 0; i--) { this.slashes[i].t += dt; if (this.slashes[i].t >= this.slashes[i].d) this.slashes.splice(i, 1); }
     for (let i = this.rings.length - 1; i >= 0; i--) { this.rings[i].t += dt; if (this.rings[i].t >= this.rings[i].d) this.rings.splice(i, 1); }
-    for (let i = this.texts.length - 1; i >= 0; i--) { const t = this.texts[i]; t.t += rawDt; t.y += t.vy * rawDt; t.vy *= Math.exp(-2.5 * rawDt); if (t.t > .9) this.texts.splice(i, 1); }
+    for (let i = this.runesList.length - 1; i >= 0; i--) {
+      this.runesList[i].t += dt;
+      if (this.runesList[i].t >= this.runesList[i].d) this.runesList.splice(i, 1);
+    }
+    for (let i = this.beams.length - 1; i >= 0; i--) {
+      this.beams[i].t += dt;
+      if (this.beams[i].t >= this.beams[i].d) this.beams.splice(i, 1);
+    }
+    for (let i = 0; i < this.texts.length; i++) { const t = this.texts[i]; t.t += rawDt; t.y += t.vy * rawDt; t.vy *= Math.exp(-2.5 * rawDt); if (t.t > .9) this.texts.splice(i, 1); }
     this.trauma = Math.max(0, this.trauma - rawDt * 2.4); const kd = Math.exp(-14 * rawDt); this.kx *= kd; this.ky *= kd;
   }
   kill(i) { const l = --this.n; if (i !== l) { this.x[i] = this.x[l]; this.y[i] = this.y[l]; this.z[i] = this.z[l]; this.vx[i] = this.vx[l]; this.vy[i] = this.vy[l]; this.vz[i] = this.vz[l]; this.life[i] = this.life[l]; this.max[i] = this.max[l]; this.size[i] = this.size[l]; this.flag[i] = this.flag[l]; this.col[i] = this.col[l]; } }
@@ -111,6 +140,38 @@ export class FX {
     for (const g of this.rings) {
       const p = g.t / g.d, r = g.r * PX * (.4 + p * .6), sx = (g.x - cx) * PX + W / 2, sy = (g.y - cy) * PX + H / 2; ctx.globalAlpha = 1 - p; ctx.fillStyle = g.col;
       for (let k = 0; k < 28; k++) { const a = k / 28 * 6.283; ctx.fillRect(Math.floor(sx + Math.cos(a) * r), Math.floor(sy + Math.sin(a) * r * .75), 1, 1); }
+    }
+    for (const rn of this.runesList) {
+      const p = rn.t / rn.d, sx = (rn.x - cx) * PX + W / 2, sy = (rn.y - cy) * PX + H / 2;
+      const r = rn.r * PX * (.85 + Math.sin(p * 3.14) * .15);
+      ctx.globalAlpha = Math.min(1, (1 - p) * 1.4);
+      const cnt = Math.max(24, Math.round(r * .9));
+      for (let k = 0; k < cnt; k++) {
+        const a = (k / cnt) * 6.283 + this.time * 1.8;
+        ctx.fillStyle = rn.cols[k % rn.cols.length];
+        ctx.fillRect(Math.floor(sx + Math.cos(a) * r), Math.floor(sy + Math.sin(a) * r * .75), 2, 2);
+        if (k % 4 === 0) {
+          ctx.fillRect(Math.floor(sx + Math.cos(-a) * r * .62), Math.floor(sy + Math.sin(-a) * r * .62 * .75), 2, 2);
+        }
+      }
+    }
+    for (const b of this.beams) {
+      const p = b.t / b.d;
+      ctx.globalAlpha = 1 - p;
+      const segs = 10, x1 = (b.x1 - cx) * PX + W / 2, y1 = (b.y1 - cy) * PX + H / 2;
+      const x2 = (b.x2 - cx) * PX + W / 2, y2 = (b.y2 - cy) * PX + H / 2;
+      let px = x1, py = y1;
+      for (let k = 1; k <= segs; k++) {
+        const u = k / segs, jit = k < segs ? (Math.sin(b.seed + k * 7.3 + this.time * 40) * 10 * PX) : 0;
+        const nx = x1 + (x2 - x1) * u + jit, ny = y1 + (y2 - y1) * u;
+        const steps = Math.max(Math.abs(nx - px), Math.abs(ny - py)) | 0;
+        for (let s = 0; s <= steps; s += 2) {
+          const t = steps ? s / steps : 0;
+          ctx.fillStyle = b.cols[(k + s) % b.cols.length];
+          ctx.fillRect(Math.floor(px + (nx - px) * t), Math.floor(py + (ny - py) * t), 2, 2);
+        }
+        px = nx; py = ny;
+      }
     }
     ctx.globalAlpha = 1;
   }
