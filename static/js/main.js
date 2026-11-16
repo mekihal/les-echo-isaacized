@@ -6,7 +6,32 @@ import { playerFrame, dir8, skinTone, sleeveColor, PW, PH, AX, AY, WALK_FRAMES, 
 import { FX, drawGlyphs } from './fx.js';
 import { Net } from './net.js';
 import { UI, NODE_NAMES } from './ui.js';
-import { TouchUI } from './touch.js';
+// Touch input is optional on desktop. A broken static response must not prevent
+// the authentication screen (and its registration controls) from initializing.
+let TouchUI;
+try {
+  const touchModule = await import('./touch.js?v=2.1.1');
+  if (typeof touchModule.TouchUI !== 'function') throw new TypeError('TouchUI export is missing');
+  TouchUI = touchModule.TouchUI;
+} catch (error) {
+  console.warn('[Les Echo] Сенсорное управление недоступно; запускаю настольный режим.', error);
+  TouchUI = class DesktopTouchFallback {
+    constructor(actions) {
+      this.a = actions;
+      this.enabled = false;
+      this.u = 2.5;
+      this.pref = 'off';
+      this.move = { x: 0, y: 0, sprint: false, active: false };
+      this.aim = { x: 0, y: 0, active: false, pressing: false };
+    }
+    recentTouch() { return false; }
+    recentMouse() { return true; }
+    setPref(pref) { this.pref = pref; this.enabled = false; document.body.classList.remove('touch'); }
+    hide() {}
+    orient() {}
+    update() {}
+  };
+}
 import { sfx } from './sfx.js';
 import { music } from './music.js';
 
