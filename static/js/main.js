@@ -297,7 +297,8 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Enter') { e.preventDefault(); ui.openChat(); releaseInputs(); return; }
   if (ui.anyOpen) return;
   if (e.repeat) { if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault(); return; }
-  const ability = row?.cl && Object.values(row.ab || {}).find((a) => a.tree === row.cl && a.key === e.code);
+  const mageHasStaff = row?.cl !== 'mage' || init?.weapons?.[row.w]?.kind === 'staff';
+  const ability = mageHasStaff && row?.cl && Object.values(row.ab || {}).find((a) => a.tree === row.cl && a.key === e.code);
   if (ability) {
     e.preventDefault();
     if (!ability.unlocked) ui.addChat(`Способность «${ability.name}» ещё не открыта.`, 'sys');
@@ -332,7 +333,7 @@ function frame(now) {
   const inp = input(), dt = raw;
   // physics prediction for the local player
   const mobile = net.me;
-  net.predict(dt, inp, init.phys, { agility: inv?.stats.agility || 1, exhausted: !!row.ex, stamina: stSm, charging: atk.charging, W: init.world.w, H: init.world.h });
+  net.predict(dt, inp, init.phys, { agility: inv?.stats.agility || 1, exhausted: !!row.ex, stamina: stSm, charging: atk.charging || !!row.cw, W: init.world.w, H: init.world.h });
   stSm = lerp(stSm, row.st, expo(10, dt)); if (row.st > stSm + 8 || row.ex) stSm = row.st;
   // aim + camera
   let aimWx = cam.x + ((mouse.cx - (innerWidth - V.W * V.css) / 2) / V.css - V.W / 2) / PX, aimWy = cam.y + ((mouse.cy - (innerHeight - V.H * V.css) / 2) / V.css - V.H / 2) / PX;

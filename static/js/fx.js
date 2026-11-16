@@ -98,7 +98,7 @@ export class FX {
       this.beams[i].t += dt;
       if (this.beams[i].t >= this.beams[i].d) this.beams.splice(i, 1);
     }
-    for (let i = 0; i < this.texts.length; i++) { const t = this.texts[i]; t.t += rawDt; t.y += t.vy * rawDt; t.vy *= Math.exp(-2.5 * rawDt); if (t.t > .9) this.texts.splice(i, 1); }
+    for (let i = this.texts.length - 1; i >= 0; i--) { const t = this.texts[i]; t.t += rawDt; t.y += t.vy * rawDt; t.vy *= Math.exp(-2.5 * rawDt); if (t.t > .9) this.texts.splice(i, 1); }
     this.trauma = Math.max(0, this.trauma - rawDt * 2.4); const kd = Math.exp(-14 * rawDt); this.kx *= kd; this.ky *= kd;
   }
   kill(i) { const l = --this.n; if (i !== l) { this.x[i] = this.x[l]; this.y[i] = this.y[l]; this.z[i] = this.z[l]; this.vx[i] = this.vx[l]; this.vy[i] = this.vy[l]; this.vz[i] = this.vz[l]; this.life[i] = this.life[l]; this.max[i] = this.max[l]; this.size[i] = this.size[l]; this.flag[i] = this.flag[l]; this.col[i] = this.col[l]; } }

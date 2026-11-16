@@ -1437,6 +1437,10 @@ async def use_ability(p: dict[str, Any], now: float, ability_id: str, aim_x: flo
 
 async def _fire_ability(p: dict[str, Any], now: float, ability_id: str,
                        aim_x: float, aim_y: float, tx: float, ty: float) -> None:
+    spec = ABILITY_CATALOG.get(ability_id)
+    if not spec:
+        return
+    tree = spec["tree"]
     event = _ability_event(p, ability_id, tx, ty, aim_x, aim_y)
     if tree == "mage":
         staff = WEAPONS.get(p.get("weapon", ""), {})
@@ -2107,6 +2111,7 @@ def player_row2(q: dict[str, Any], now: float, mine: bool) -> dict[str, Any]:
     if q["attack"]:
         spec = WEAPONS[q["attack"]["weapon"]]
         row["at"] = round(min(1.0, max(0.0, (now - q["attack"]["started"]) / spec["charge"])), 2)
+    if q.get("cast_pending"): row["cw"] = 1
     if q.get("sprinting"): row["sp"] = 1
     if q["dodge_until"] > now: row["dg"] = 1
     if q["respawn_at"] > now: row["rs"] = 1
